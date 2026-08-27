@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <AssemblyName>StatementDelivery.Domain</AssemblyName>
+    <RootNamespace>StatementDelivery.Domain</RootNamespace>
+  </PropertyGroup>
+
+  <!--
+    THIS PROJECT REFERENCES NOTHING. No ProjectReference, no PackageReference, deliberately and
+    permanently.
+
+    Not purity for its own sake: the domain is the one layer whose rules must outlive every
+    framework decision around it. A reference to Npgsql here would mean a database concern had
+    leaked into the model; a reference to ASP.NET Core would mean an HTTP concern had. Both are
+    one-way doors - once the model knows about them, extracting it again is a rewrite.
+
+    Only the base class library is available, and only its pure parts: DateOnly, Guid, SHA256,
+    System.Text.Json for canonical hashing. Nothing here does I/O.
+
+    tests/ArchitectureTests/DomainPurityTests.cs enforces this. If you are here to add a
+    reference, the type you want belongs in Persistence or in the service instead.
+  -->
+
+</Project>

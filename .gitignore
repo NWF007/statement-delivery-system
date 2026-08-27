@@ -1,0 +1,55 @@
+## Build output
+[Bb]in/
+[Oo]bj/
+[Oo]ut/
+artifacts/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Ll]og/
+[Ll]ogs/
+TestResults/
+*.coverage
+*.coverxml
+coverage*.json
+coverage*.xml
+coverage*.info
+
+## Visual Studio / Rider / VS Code
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.DotSettings.user
+
+## NuGet
+*.nupkg
+*.snupkg
+.nuget/
+packages/
+!**/packages/build/
+
+## Local configuration and secrets - never commit these.
+## .env.example IS committed; .env is not.
+.env
+.env.*
+!.env.example
+appsettings.Local.json
+appsettings.*.Local.json
+*.pfx
+*.p12
+*.key
+secrets.json
+
+## OS noise
+.DS_Store
+Thumbs.db
+desktop.ini
+
+## Tooling
+*.received.*
+BenchmarkDotNet.Artifacts/

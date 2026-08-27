@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
+    <PackageReference Include="NSubstitute" />
+    <PackageReference Include="Shouldly" />
+    <PackageReference Include="xunit.v3" />
+  </ItemGroup>
+
+  <!--
+    Delivery.Api is referenced so the JWT options validator can be tested directly. That validator
+    is a security control, not configuration plumbing: it is what stops a development signing key
+    from reaching a deployed environment.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Services\Delivery.Api\Delivery.Api.csproj" />
+    <ProjectReference Include="..\..\src\Services\Download.Gateway\Download.Gateway.csproj" />
+    <ProjectReference Include="..\..\src\BuildingBlocks\ServiceDefaults\ServiceDefaults.csproj" />
+  </ItemGroup>
+
+</Project>

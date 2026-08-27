@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Db.Migrator</RootNamespace>
+    <AssemblyName>Db.Migrator</AssemblyName>
+  </PropertyGroup>
+
+  <!--
+    Scripts ship as embedded resources, not as loose files next to the binary. A migration runner
+    whose scripts can be edited after the image is built is a migration runner whose behaviour
+    depends on the filesystem it lands on. Embedding makes the image the unit of truth.
+    Resource names are Db.Migrator.Scripts.Vnnn__*.sql, so lexical order is execution order.
+  -->
+  <ItemGroup>
+    <EmbeddedResource Include="Scripts\**\*.sql" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="dbup-postgresql" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <PackageReference Include="Microsoft.Extensions.Options.DataAnnotations" />
+    <PackageReference Include="Npgsql" />
+  </ItemGroup>
+
+</Project>

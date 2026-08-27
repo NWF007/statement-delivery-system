@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="Dapper" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks" />
+    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
+    <PackageReference Include="Npgsql" />
+    <PackageReference Include="Shouldly" />
+    <PackageReference Include="Testcontainers.Minio" />
+    <PackageReference Include="Testcontainers.PostgreSql" />
+    <PackageReference Include="Testcontainers.Redis" />
+    <PackageReference Include="dbup-postgresql" />
+    <PackageReference Include="xunit.v3" />
+  </ItemGroup>
+
+  <!--
+    Real dependencies in real containers, never in-memory fakes. The behaviour under test here is
+    PostgreSQL's: partition pruning, GRANT enforcement, and the atomicity of an
+    INSERT ... ON CONFLICT DO UPDATE. A fake would assert only that the fake agrees with itself.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\BuildingBlocks\Persistence\Persistence.csproj" />
+    <ProjectReference Include="..\..\src\Migrations\Db.Migrator\Db.Migrator.csproj" />
+    <ProjectReference Include="..\..\src\Services\Delivery.Api\Delivery.Api.csproj" />
+    <ProjectReference Include="..\..\src\Services\Download.Gateway\Download.Gateway.csproj" />
+  </ItemGroup>
+
+</Project>

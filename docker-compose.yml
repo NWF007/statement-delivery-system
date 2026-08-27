@@ -1,0 +1,385 @@
+# =============================================================================================
+#  Secure Statement Delivery Platform - local stack.
+#
+#      cp .env.example .env && docker compose up --build
+#
+#  Nothing here needs a manual step. Every dependency declares a health check and every consumer
+#  waits on it, so a cold start on a clean clone converges on its own rather than depending on
+#  whichever container happened to win the race.
+#
+#  Topology note: services NEVER connect to PostgreSQL directly. They go through PgBouncer on
+#  6432, on a per-workload pool. Only db-migrator talks to 5432, because DDL needs a session it
+#  owns and CREATEROLE, which no running service has.
+#  See docs/adr/0008-pgbouncer-transaction-pooling.md.
+# =============================================================================================
+
+name: statement-delivery
+
+# ---------------------------------------------------------------------------------------------
+#  Shared fragments. Every service gets the same observability and shutdown configuration; a
+#  service that had to remember it for itself is a service that will eventually forget.
+# ---------------------------------------------------------------------------------------------
+x-observability: &observability
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://aspire-dashboard:18889
+  OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+  # Emitted on every span, metric and log as a resource attribute.
+  OTEL_SERVICE_NAME: ${COMPOSE_PROJECT_NAME:-statement-delivery}
+
+x-dotnet: &dotnet
+  ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
+  ASPNETCORE_HTTP_PORTS: "8080"
+  DOTNET_EnableDiagnostics: "0"
+
+x-service-deps: &service-deps
+  db-migrator:
+    condition: service_completed_successfully
+  pgbouncer:
+    condition: service_healthy
+  redis:
+    condition: service_healthy
+  minio:
+    condition: service_healthy
+  aspire-dashboard:
+    # service_started, NOT service_healthy, and deliberately so. A telemetry backend must never
+    # gate application startup: if the dashboard is down the correct behaviour is a service that
+    # runs and drops its telemetry, not a service that refuses to start.
+    condition: service_started
+
+services:
+  # -------------------------------------------------------------------------------------------
+  #  Data stores
+  # -------------------------------------------------------------------------------------------
+  postgres:
+    image: postgres:17.11-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      # SCRAM rather than md5. md5 is deprecated and offline-crackable.
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --auth-local=scram-sha-256"
+      POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+    command:
+      - postgres
+      # D9: slow queries must be visible during development, not discovered in production.
+      - -c
+      - log_min_duration_statement=200
+      # Headroom above the four per-workload PgBouncer pools (20+20+40+5 = 85) plus the migrator
+      # and any human with psql. PgBouncer is what keeps this number small enough to be sane.
+      - -c
+      - max_connections=200
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      # Streaming replication for the opt-in `replica` profile.
+      - -c
+      - wal_level=replica
+      - -c
+      - max_wal_senders=10
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # pg_isready, not a query: the question is "is the server accepting connections", and a
+      # health check that runs SQL becomes part of the load during an incident.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB} -h 127.0.0.1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    networks: [statement-delivery]
+
+  # Optional streaming replica, so the ConnectionIntent read/write split can be exercised locally.
+  # NOT started by default:  docker compose --profile replica up -d postgres-replica
+  postgres-replica:
+    image: postgres:17.11-alpine
+    profiles: [replica]
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    # Clones the primary on first start, then runs as a hot standby. -R writes standby.signal and
+    # primary_conninfo, which is what makes it stream rather than sit as a frozen copy.
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        if [ ! -s /var/lib/postgresql/data/PG_VERSION ]; then
+          rm -rf /var/lib/postgresql/data/*
+          pg_basebackup -h postgres -p 5432 -U "${POSTGRES_USER}" -D /var/lib/postgresql/data -Fp -Xs -R
+          chown -R postgres:postgres /var/lib/postgresql/data
+          chmod 0700 /var/lib/postgresql/data
+        fi
+        exec su-exec postgres postgres
+    volumes:
+      - postgres-replica-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB} -h 127.0.0.1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    networks: [statement-delivery]
+
+  # Writes PgBouncer's auth file from .env, so no password is ever committed. One-shot: it exits
+  # as soon as the file exists, and PgBouncer waits for that exit before starting.
+  pgbouncer-config:
+    image: postgres:17.11-alpine
+    environment:
+      APP_DELIVERY_PASSWORD: ${APP_DELIVERY_PASSWORD}
+      APP_DOWNLOAD_PASSWORD: ${APP_DOWNLOAD_PASSWORD}
+      APP_GENERATION_PASSWORD: ${APP_GENERATION_PASSWORD}
+      APP_RETENTION_PASSWORD: ${APP_RETENTION_PASSWORD}
+      PGBOUNCER_ADMIN_PASSWORD: ${PGBOUNCER_ADMIN_PASSWORD}
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        umask 077
+        cat > /userlist/userlist.txt <<USERLIST
+        "app_delivery" "$${APP_DELIVERY_PASSWORD}"
+        "app_download" "$${APP_DOWNLOAD_PASSWORD}"
+        "app_generation" "$${APP_GENERATION_PASSWORD}"
+        "app_retention" "$${APP_RETENTION_PASSWORD}"
+        "pgbouncer" "$${PGBOUNCER_ADMIN_PASSWORD}"
+        USERLIST
+        echo "pgbouncer userlist written"
+    volumes:
+      - pgbouncer-userlist:/userlist
+    networks: [statement-delivery]
+
+  pgbouncer:
+    image: edoburu/pgbouncer:v1.25.2-p0
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      pgbouncer-config:
+        condition: service_completed_successfully
+    ports:
+      - "${PGBOUNCER_PORT:-6432}:6432"
+    volumes:
+      - ./deploy/pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - pgbouncer-userlist:/etc/pgbouncer/userlist:ro
+    healthcheck:
+      # A TCP probe rather than a query. Authenticating would need a credential inside the health
+      # check, and the question here is only "is the pooler listening".
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 6432 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    networks: [statement-delivery]
+
+  redis:
+    image: redis:7.4.11-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning", "--maxmemory-policy", "allkeys-lru"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    networks: [statement-delivery]
+
+  # -------------------------------------------------------------------------------------------
+  #  Object storage
+  # -------------------------------------------------------------------------------------------
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks: [statement-delivery]
+
+  createbuckets:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      STATEMENTS_BUCKET: ${STATEMENTS_BUCKET}
+    entrypoint:
+      - sh
+      - -c
+      - |
+        set -e
+        mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"
+        mc mb --ignore-existing "local/$${STATEMENTS_BUCKET}"
+        # VERSIONING IS NOT OPTIONAL HERE. Statements are kept for a seven-year regulatory
+        # retention period and must be immutable; versioning is what turns an accidental
+        # overwrite into a new version rather than a destroyed record. It also underpins object
+        # locking, which is how the immutability claim is actually enforced later.
+        mc version enable "local/$${STATEMENTS_BUCKET}"
+        mc anonymous set none "local/$${STATEMENTS_BUCKET}"
+        echo "bucket $${STATEMENTS_BUCKET} ready with versioning enabled"
+    networks: [statement-delivery]
+
+  # -------------------------------------------------------------------------------------------
+  #  Observability
+  # -------------------------------------------------------------------------------------------
+  #  One container instead of Jaeger + Prometheus + Grafana + Seq. It accepts OTLP and renders
+  #  traces, metrics and structured logs in one UI. See ADR-0004 for why there is no Aspire
+  #  AppHost: the deliverable is a Dockerfile per service and a compose file, and an AppHost is a
+  #  different orchestration model that would duplicate or contradict both.
+  aspire-dashboard:
+    image: mcr.microsoft.com/dotnet/aspire-dashboard:9.5.2
+    restart: unless-stopped
+    environment:
+      # Local development only. The dashboard has no persistence and no tenancy; it must never be
+      # exposed beyond a developer machine.
+      DASHBOARD__FRONTEND__AUTHMODE: Unsecured
+      DASHBOARD__OTLP__AUTHMODE: Unsecured
+    ports:
+      - "${ASPIRE_DASHBOARD_PORT:-18888}:18888"
+    networks: [statement-delivery]
+
+  # -------------------------------------------------------------------------------------------
+  #  Schema migration - runs once, exits 0, and gates everything else.
+  # -------------------------------------------------------------------------------------------
+  db-migrator:
+    build:
+      context: .
+      dockerfile: src/Migrations/Db.Migrator/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      <<: *dotnet
+      # DIRECT to PostgreSQL on 5432, not through PgBouncer. DDL needs a session it owns, and
+      # V001 needs CREATEROLE.
+      Migration__ConnectionString: Host=postgres;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      Migration__AppDeliveryPassword: ${APP_DELIVERY_PASSWORD}
+      Migration__AppDownloadPassword: ${APP_DOWNLOAD_PASSWORD}
+      Migration__AppGenerationPassword: ${APP_GENERATION_PASSWORD}
+      Migration__AppRetentionPassword: ${APP_RETENTION_PASSWORD}
+      Migration__AppMigratorPassword: ${APP_MIGRATOR_PASSWORD}
+    restart: "no"
+    networks: [statement-delivery]
+
+  # -------------------------------------------------------------------------------------------
+  #  Services
+  # -------------------------------------------------------------------------------------------
+  delivery-api:
+    build:
+      context: .
+      dockerfile: src/Services/Delivery.Api/Dockerfile
+    restart: unless-stopped
+    depends_on: *service-deps
+    environment:
+      <<: [*dotnet, *observability]
+      OTEL_SERVICE_NAME: delivery-api
+      Postgres__PrimaryConnectionString: Host=pgbouncer;Port=6432;Database=statements_delivery;Username=app_delivery;Password=${APP_DELIVERY_PASSWORD}
+      Postgres__ReplicaConnectionString: ${POSTGRES_REPLICA_CONNECTION}
+      Cache__ConnectionString: redis:6379
+      Jwt__Issuer: ${JWT_ISSUER}
+      Jwt__Audience: ${JWT_AUDIENCE}
+      Jwt__DevelopmentSigningKey: ${JWT_DEV_SIGNING_KEY}
+      Jwt__RequireHttpsMetadata: "false"
+      # The link points at the GATEWAY, a different service on a different port. Issuing and
+      # redeeming are separate deployables precisely so a flood against the public one cannot
+      # exhaust the authenticated one.
+      DownloadLinks__GatewayBaseUrl: http://localhost:${DOWNLOAD_GATEWAY_PORT:-8082}
+    ports:
+      - "${DELIVERY_API_PORT:-8081}:8080"
+    networks: [statement-delivery]
+
+  download-gateway:
+    build:
+      context: .
+      dockerfile: src/Services/Download.Gateway/Dockerfile
+    restart: unless-stopped
+    depends_on: *service-deps
+    environment:
+      <<: [*dotnet, *observability]
+      OTEL_SERVICE_NAME: download-gateway
+      Postgres__PrimaryConnectionString: Host=pgbouncer;Port=6432;Database=statements_download;Username=app_download;Password=${APP_DOWNLOAD_PASSWORD}
+      Postgres__ReplicaConnectionString: ${POSTGRES_REPLICA_CONNECTION}
+      Cache__ConnectionString: redis:6379
+      ObjectStorage__ServiceUrl: http://minio:9000
+      ObjectStorage__BucketName: ${STATEMENTS_BUCKET}
+      ObjectStorage__AccessKey: ${MINIO_ROOT_USER}
+      ObjectStorage__SecretKey: ${MINIO_ROOT_PASSWORD}
+      ContentStore__RootPath: /var/lib/statement-delivery/content
+    ports:
+      - "${DOWNLOAD_GATEWAY_PORT:-8082}:8080"
+    volumes:
+      # Shared with generation-worker, which writes what this service reads. A filesystem store is
+      # the Prompt 3 adapter behind IStatementContentStore; Prompt 4 swaps it for encrypted object
+      # storage and this volume goes away.
+      - statement-content:/var/lib/statement-delivery/content
+    networks: [statement-delivery]
+
+  generation-worker:
+    build:
+      context: .
+      dockerfile: src/Services/Generation.Worker/Dockerfile
+    restart: unless-stopped
+    depends_on: *service-deps
+    environment:
+      <<: [*dotnet, *observability]
+      OTEL_SERVICE_NAME: generation-worker
+      Postgres__PrimaryConnectionString: Host=pgbouncer;Port=6432;Database=statements_generation;Username=app_generation;Password=${APP_GENERATION_PASSWORD}
+      Postgres__ReplicaConnectionString: ${POSTGRES_REPLICA_CONNECTION}
+      Cache__ConnectionString: redis:6379
+      ObjectStorage__ServiceUrl: http://minio:9000
+      ObjectStorage__BucketName: ${STATEMENTS_BUCKET}
+      ObjectStorage__AccessKey: ${MINIO_ROOT_USER}
+      ObjectStorage__SecretKey: ${MINIO_ROOT_PASSWORD}
+    # No published ports. This is the service that scales 0 -> 400 at month-end; a host port
+    # binding would make the second replica fail to start.
+    networks: [statement-delivery]
+
+  retention-worker:
+    build:
+      context: .
+      dockerfile: src/Services/Retention.Worker/Dockerfile
+    restart: unless-stopped
+    depends_on: *service-deps
+    environment:
+      <<: [*dotnet, *observability]
+      OTEL_SERVICE_NAME: retention-worker
+      Postgres__PrimaryConnectionString: Host=pgbouncer;Port=6432;Database=statements_retention;Username=app_retention;Password=${APP_RETENTION_PASSWORD}
+      Postgres__ReplicaConnectionString: ${POSTGRES_REPLICA_CONNECTION}
+      Cache__ConnectionString: redis:6379
+      ObjectStorage__ServiceUrl: http://minio:9000
+      ObjectStorage__BucketName: ${STATEMENTS_BUCKET}
+      ObjectStorage__AccessKey: ${MINIO_ROOT_USER}
+      ObjectStorage__SecretKey: ${MINIO_ROOT_PASSWORD}
+    # No published ports and no container_name, so this can be scaled to prove leader election:
+    #     docker compose up -d --scale retention-worker=3
+    #     docker compose logs retention-worker | grep -c "lease acquired"   # -> 1
+    networks: [statement-delivery]
+
+volumes:
+  statement-content:
+  postgres-data:
+  postgres-replica-data:
+  minio-data:
+  pgbouncer-userlist:
+
+networks:
+  statement-delivery:
+    driver: bridge

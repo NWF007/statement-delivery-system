@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
+    <PackageReference Include="NetArchTest.Rules" />
+    <PackageReference Include="Shouldly" />
+    <PackageReference Include="xunit.v3" />
+  </ItemGroup>
+
+  <!--
+    Deliberately references ONLY the building blocks, never the services. Two reasons:
+    the rules about services are rules about the PROJECT graph, and are checked by reading the
+    .csproj files themselves - which is stricter, because it catches a reference that compiles
+    away to nothing; and a test project that referenced all four executables would be exempting
+    itself from the very rule it enforces.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\BuildingBlocks\Domain\Domain.csproj" />
+    <ProjectReference Include="..\..\src\BuildingBlocks\Contracts\Contracts.csproj" />
+    <ProjectReference Include="..\..\src\BuildingBlocks\Messaging\Messaging.csproj" />
+    <ProjectReference Include="..\..\src\BuildingBlocks\Persistence\Persistence.csproj" />
+    <ProjectReference Include="..\..\src\BuildingBlocks\ServiceDefaults\ServiceDefaults.csproj" />
+
+    <!-- The two HTTP services, so the token-boundary rules can read their compiled IL.
+         A test project may reference a deployable; the rule that dependencies point inwards
+         applies to src/BuildingBlocks, and BuildingBlocks_ShouldNotDependOn_Services enforces it. -->
+    <ProjectReference Include="..\..\src\Services\Delivery.Api\Delivery.Api.csproj" />
+    <ProjectReference Include="..\..\src\Services\Download.Gateway\Download.Gateway.csproj" />
+  </ItemGroup>
+
+</Project>

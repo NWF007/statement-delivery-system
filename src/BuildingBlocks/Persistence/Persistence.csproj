@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <AssemblyName>StatementDelivery.Persistence</AssemblyName>
+    <RootNamespace>StatementDelivery.Persistence</RootNamespace>
+  </PropertyGroup>
+
+  <!--
+    Persistence must never reference ASP.NET Core. It is consumed by two web services AND by
+    two workers AND by the seed tool; pulling the web framework in would make the worker images
+    carry it for nothing and would invite HTTP concerns into the data layer. The health-check
+    and hosting abstractions used here are the framework-agnostic Microsoft.Extensions.*
+    packages, not the Microsoft.AspNetCore.App shared framework.
+    tests/ArchitectureTests enforces this.
+  -->
+  <!--
+    Persistence references Domain, never the other way round. The domain declares the ports
+    (IIdGenerator); this project supplies the adapters. Reversing that arrow would put a database
+    concern inside the model.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\Domain\Domain.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Dapper" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Options" />
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" />
+    <PackageReference Include="Microsoft.Extensions.Options.DataAnnotations" />
+    <PackageReference Include="Npgsql" />
+  </ItemGroup>
+
+</Project>

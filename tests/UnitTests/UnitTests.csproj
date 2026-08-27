@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
+    <PackageReference Include="NSubstitute" />
+    <PackageReference Include="Shouldly" />
+    <PackageReference Include="xunit.v3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\BuildingBlocks\Domain\Domain.csproj" />
+    <ProjectReference Include="..\..\src\BuildingBlocks\Persistence\Persistence.csproj" />
+    <ProjectReference Include="..\..\src\BuildingBlocks\ServiceDefaults\ServiceDefaults.csproj" />
+    <ProjectReference Include="..\..\src\BuildingBlocks\Messaging\Messaging.csproj" />
+    <ProjectReference Include="..\..\src\BuildingBlocks\Contracts\Contracts.csproj" />
+  </ItemGroup>
+
+</Project>

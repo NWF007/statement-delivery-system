@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <AssemblyName>StatementDelivery.Contracts</AssemblyName>
+    <RootNamespace>StatementDelivery.Contracts</RootNamespace>
+  </PropertyGroup>
+
+  <!--
+    Contracts deliberately has NO package and NO project references, and it must stay that way.
+    It is the assembly every other deployable is allowed to depend on, so anything added here
+    becomes a dependency of the entire estate. tests/ArchitectureTests enforces this.
+  -->
+
+</Project>

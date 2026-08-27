@@ -1,0 +1,337 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "true"
+  TESTINGPLATFORM_TELEMETRY_OPTOUT: "true"
+  # Reproducible builds: stamps SourceRoot so paths in PDBs are not the runner's working directory.
+  ContinuousIntegrationBuild: "true"
+
+jobs:
+  # -------------------------------------------------------------------------------------------
+  #  build - the primary gate.
+  #  TreatWarningsAsErrors is on repository-wide, so any new warning fails here. That is the
+  #  point: a repository presented as production-grade should not build with warnings, and the
+  #  only way that stays true is if a warning cannot be merged.
+  # -------------------------------------------------------------------------------------------
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Cache NuGet
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          # Keyed on the central version file. Central Package Management means it is the ONE file
+          # that can change the restore graph, so nothing else belongs in the key.
+          key: nuget-${{ runner.os }}-${{ hashFiles('Directory.Packages.props', 'global.json') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - run: dotnet restore StatementDelivery.sln
+
+      - run: dotnet build StatementDelivery.sln --configuration Release --no-restore
+
+      - name: Upload build output
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: |
+            **/bin/Release/net10.0/**
+          retention-days: 1
+          if-no-files-found: error
+
+  # -------------------------------------------------------------------------------------------
+  #  format - whitespace, using ordering and style, verified rather than applied.
+  # -------------------------------------------------------------------------------------------
+  format:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Cache NuGet
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('Directory.Packages.props', 'global.json') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - run: dotnet restore StatementDelivery.sln
+
+      - name: Verify formatting
+        run: dotnet format StatementDelivery.sln --verify-no-changes --no-restore --verbosity diagnostic
+
+  # -------------------------------------------------------------------------------------------
+  #  test - unit, architecture and security. No Docker, so this stays fast.
+  # -------------------------------------------------------------------------------------------
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Cache NuGet
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('Directory.Packages.props', 'global.json') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - run: dotnet restore StatementDelivery.sln
+
+      # `dotnet test` on the .NET 10 SDK runs Microsoft.Testing.Platform, opted into by the
+      # "test" section of global.json. VSTest is not supported, and `--nologo` is not a valid
+      # option here - passing it makes the run report "Zero tests ran" rather than failing.
+      - name: Unit tests
+        run: >
+          dotnet test --project tests/UnitTests/UnitTests.csproj
+          --configuration Release
+          --
+          --coverage --coverage-output-format cobertura --coverage-output unit.cobertura.xml
+
+      - name: Architecture tests
+        run: >
+          dotnet test --project tests/ArchitectureTests/ArchitectureTests.csproj
+          --configuration Release
+          --
+          --coverage --coverage-output-format cobertura --coverage-output architecture.cobertura.xml
+
+      - name: Security tests
+        run: >
+          dotnet test --project tests/SecurityTests/SecurityTests.csproj
+          --configuration Release
+          --
+          --coverage --coverage-output-format cobertura --coverage-output security.cobertura.xml
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: "**/*.cobertura.xml"
+          retention-days: 7
+          if-no-files-found: warn
+
+  # -------------------------------------------------------------------------------------------
+  #  integration - Testcontainers against real PostgreSQL. Skips gracefully without Docker.
+  # -------------------------------------------------------------------------------------------
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Cache NuGet
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('Directory.Packages.props', 'global.json') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      # DockerAvailability probes for a usable daemon and the tests report as SKIPPED when there is
+      # none. A red build meaning "this runner has no Docker" trains people to ignore red builds.
+      - name: Check Docker
+        id: docker
+        run: docker info --format '{{.ServerVersion}}' || echo "no docker"
+
+      - run: dotnet restore StatementDelivery.sln
+
+      - name: Integration tests
+        run: dotnet test --project tests/IntegrationTests/IntegrationTests.csproj --configuration Release
+
+      # ACCEPTANCE CHECK 36. Repeated, not run once.
+      #
+      # A race that fails one time in fifty passes a single run and ships. The atomic consume is the
+      # property everything else in this system rests on, so it gets twenty independent runs of
+      # fifty concurrent redemptions each - and the loop stops at the first failure rather than
+      # burying it among nineteen passes.
+      #
+      # Skips cleanly on a runner with no Docker, exactly like the job above it.
+      - name: Concurrency - exactly one winner, twenty times
+        run: |
+          for i in $(seq 1 20); do
+            echo "--- concurrency run $i of 20"
+            dotnet test --project tests/IntegrationTests/IntegrationTests.csproj               --configuration Release --no-build               --filter-method '*ConcurrentRedemption_ExactlyOneSucceeds*' || exit 1
+          done
+
+  # -------------------------------------------------------------------------------------------
+  #  docker - build every image and prove it starts and answers its liveness probe.
+  # -------------------------------------------------------------------------------------------
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Prepare environment
+        run: cp .env.example .env
+
+      - name: Build images
+        run: docker compose build --progress plain
+
+      - name: Start the stack
+        run: docker compose up --detach --wait --wait-timeout 300
+
+      - name: Migrator exited successfully
+        run: |
+          status=$(docker compose ps --all --format json db-migrator | head -1)
+          echo "$status"
+          docker compose ps --all db-migrator | grep -qE "Exited \(0\)" \
+            || { echo "db-migrator did not exit 0"; docker compose logs db-migrator; exit 1; }
+
+      - name: Liveness and readiness
+        run: |
+          set -e
+          for url in \
+            http://localhost:8081/health/live \
+            http://localhost:8081/health/ready \
+            http://localhost:8082/health/live \
+            http://localhost:8082/health/ready ; do
+            echo "GET $url"
+            curl --fail --silent --show-error --max-time 10 "$url" > /dev/null
+          done
+
+      - name: Ping returns real version metadata
+        run: |
+          curl --fail --silent --max-time 10 http://localhost:8081/ping | tee /dev/stderr | jq -e '.service and .version and .environment and .utcNow'
+
+      # Chiseled images have no shell, so `docker compose exec ... id` cannot run. Inspect the
+      # image configuration instead - which is the stronger check anyway, because it asserts what
+      # the image declares rather than what one running container happens to be doing.
+      - name: Containers run as non-root
+        run: |
+          set -e
+          for image in statement-delivery-delivery-api statement-delivery-download-gateway \
+                       statement-delivery-generation-worker statement-delivery-retention-worker; do
+            user=$(docker image inspect "$image" --format '{{.Config.User}}')
+            echo "$image runs as '$user'"
+            [ -n "$user" ] && [ "$user" != "root" ] && [ "$user" != "0" ] \
+              || { echo "$image would run as root"; exit 1; }
+          done
+
+      - name: Leader election elects exactly one retention worker
+        run: |
+          docker compose up --detach --scale retention-worker=3
+          sleep 30
+          acquired=$(docker compose logs retention-worker | grep -c "lease acquired" || true)
+          echo "lease acquired lines: $acquired"
+          [ "$acquired" -eq 1 ] || { docker compose logs retention-worker; exit 1; }
+
+      - name: PgBouncer is pooling
+        run: |
+          docker compose exec -T postgres env PGPASSWORD="${PGBOUNCER_ADMIN_PASSWORD:-local-dev-pgbouncer-password}" \
+            psql -h pgbouncer -p 6432 -U pgbouncer pgbouncer -c "SHOW POOLS;"
+
+      - name: Least privilege is enforced
+        run: |
+          set +e
+          docker compose exec -T postgres env PGPASSWORD="${APP_DELIVERY_PASSWORD:-local-dev-delivery-password}" \
+            psql -h pgbouncer -p 6432 -U app_delivery statements_delivery -c "DELETE FROM outbox;" 2>&1 | tee /tmp/denied.txt
+          set -e
+          grep -qi "permission denied" /tmp/denied.txt || { echo "app_delivery was NOT denied DELETE"; exit 1; }
+
+      - name: Dump logs on failure
+        if: failure()
+        run: docker compose logs --no-color
+
+      - name: Tear down
+        if: always()
+        run: docker compose down --volumes --remove-orphans
+
+  # -------------------------------------------------------------------------------------------
+  #  scan - vulnerable dependencies and image CVEs. Fails on any hit.
+  # -------------------------------------------------------------------------------------------
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - run: dotnet restore StatementDelivery.sln
+
+      # `dotnet list package --vulnerable` exits 0 even when it finds something, so the output has
+      # to be inspected. Transitive packages are included: a vulnerability two levels down ships
+      # in the image exactly like a direct one.
+      - name: Vulnerable NuGet packages
+        run: |
+          dotnet list StatementDelivery.sln package --vulnerable --include-transitive 2>&1 | tee /tmp/vulnerable.txt
+          if grep -qiE "has the following vulnerable packages" /tmp/vulnerable.txt; then
+            echo "::error::Vulnerable packages found"
+            exit 1
+          fi
+          echo "No vulnerable packages."
+
+      - name: Deprecated NuGet packages
+        run: dotnet list StatementDelivery.sln package --deprecated --include-transitive
+
+      - name: Prepare environment
+        run: cp .env.example .env
+
+      - name: Build images for scanning
+        run: docker compose build delivery-api download-gateway generation-worker retention-worker db-migrator
+
+      - name: Trivy
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: image
+          image-ref: statement-delivery-delivery-api
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+          vuln-type: os,library
+
+      - name: Trivy - remaining images
+        run: |
+          set -e
+          for image in statement-delivery-download-gateway statement-delivery-generation-worker \
+                       statement-delivery-retention-worker statement-delivery-db-migrator; do
+            echo "::group::trivy $image"
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+              aquasec/trivy:latest image --exit-code 1 --ignore-unfixed \
+              --severity CRITICAL,HIGH --vuln-type os,library "$image"
+            echo "::endgroup::"
+          done

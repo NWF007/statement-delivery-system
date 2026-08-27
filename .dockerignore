@@ -1,0 +1,47 @@
+# Keep the build context small and free of host-local state.
+# Everything the Dockerfiles need is source, project files and the root MSBuild config.
+
+**/bin/
+**/obj/
+**/out/
+artifacts/
+**/TestResults/
+
+.git/
+.github/
+.gitignore
+.gitattributes
+
+.vs/
+.vscode/
+.idea/
+**/*.user
+**/*.suo
+**/*.DotSettings.user
+
+**/node_modules/
+
+# Tests are not built inside the service images. They run in CI and locally.
+tests/
+
+# Local-only configuration and secrets.
+.env
+.env.*
+!.env.example
+**/appsettings.Local.json
+**/*.pfx
+**/*.p12
+**/*.key
+
+# Documentation and compose assets are not needed by a service build.
+docs/
+README.md
+docker-compose.yml
+docker-compose.*.yml
+**/Dockerfile
+.dockerignore
+
+# Host-local NuGet output
+**/*.nupkg
+**/*.snupkg
+BenchmarkDotNet.Artifacts/

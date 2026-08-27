@@ -1,0 +1,19 @@
+# Normalise to LF in the repository, and check out LF everywhere.
+#
+# Without this, core.autocrlf on a Windows clone restores CRLF into the working tree, and the very
+# next `dotnet format --verify-no-changes` fails on line endings alone - on a machine where nothing
+# was actually edited. The CI job runs on Linux and would still pass, so the break would only ever
+# be visible locally, which is the worst place for it.
+* text=auto eol=lf
+
+# Binary, so git never tries to normalise or diff them as text.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.pdf  binary
+*.zip  binary
+*.gz   binary
+*.snk  binary
+*.pfx  binary
