@@ -149,6 +149,18 @@ public static class DenialReason
 
     /// <summary>The presented value was not a well-formed token at all.</summary>
     public const string MalformedToken = "MALFORMED_TOKEN";
+
+    /// <summary>
+    /// The token was valid and the object could not be decrypted. NOT A USER ERROR.
+    /// </summary>
+    /// <remarks>
+    /// Every other reason on this list describes something a caller did. This one describes
+    /// something that happened to the DATA: a corrupt object, a truncated one, an object substituted
+    /// for another, or a statement row rewritten to point somewhere it should not. The customer sees
+    /// the same 404 as everyone else, and an operator should be woken up. See
+    /// <c>statement_decryption_failure_total</c>, which is alerted on any non-zero value.
+    /// </remarks>
+    public const string DecryptionFailed = "DECRYPTION_FAILED";
 }
 
 /// <summary>

@@ -62,6 +62,7 @@ public sealed class DownloadMetrics : IDisposable
     private readonly Counter<long> _incomplete;
     private readonly Counter<long> _completed;
     private readonly Counter<long> _bytes;
+    private readonly Counter<long> _decryptionFailures;
 
     /// <summary>Initialises a new instance of the <see cref="DownloadMetrics"/> class.</summary>
     /// <param name="meterFactory">Meter factory from dependency injection.</param>
@@ -96,6 +97,16 @@ public sealed class DownloadMetrics : IDisposable
             "download_bytes_total",
             unit: "By",
             description: "Bytes streamed to clients.");
+
+        // ALERT ON ANY NON-ZERO VALUE. Not a rate, not a threshold, not a percentage of requests -
+        // any value at all. Every other counter here measures something that happens in normal
+        // operation and is interesting only when its rate moves. This one measures a stored object
+        // that failed to authenticate, which means corruption, substitution or tampering. One
+        // occurrence is an incident; waiting for a second is waiting to see whether it spreads.
+        _decryptionFailures = _meter.CreateCounter<long>(
+            "statement_decryption_failure_total",
+            unit: "{failure}",
+            description: "Objects that failed to decrypt. NOT a user error - corruption or tampering. Alert on any non-zero value.");
     }
 
     /// <summary>
@@ -118,6 +129,7 @@ public sealed class DownloadMetrics : IDisposable
         DenialReason.NotOwner,
         DenialReason.SubjectMismatch,
         DenialReason.NoSubjectClaim,
+        DenialReason.DecryptionFailed,
     };
 
     /// <summary>The label used when a caller passes something not on the known list.</summary>
@@ -141,6 +153,20 @@ public sealed class DownloadMetrics : IDisposable
             new KeyValuePair<string, object?>(
                 "reason",
                 KnownReasons.Contains(reason) ? reason : UnclassifiedReason));
+
+    /// <summary>
+    /// Records an object that failed to decrypt, and denies it as well.
+    /// </summary>
+    /// <remarks>
+    /// Both counters move: the denial counter so the reason breakdown stays complete, and the
+    /// dedicated counter so the alert can be written against one unambiguous series rather than
+    /// against a label filter somebody has to get right.
+    /// </remarks>
+    public void DecryptionFailed()
+    {
+        _decryptionFailures.Add(1);
+        Denied(DenialReason.DecryptionFailed);
+    }
 
     /// <summary>Records a transfer that did not finish.</summary>
     public void Incomplete() => _incomplete.Add(1);

@@ -18,8 +18,14 @@
     (IIdGenerator); this project supplies the adapters. Reversing that arrow would put a database
     concern inside the model.
   -->
+  <!--
+    Crypto joins Domain as an inward dependency in Prompt 4. Persistence supplies the customer_key
+    adapter behind ICustomerKeyStore; the port and the cipher stay in Crypto, which knows nothing
+    about Npgsql. The arrow still points one way.
+  -->
   <ItemGroup>
     <ProjectReference Include="..\Domain\Domain.csproj" />
+    <ProjectReference Include="..\Crypto\Crypto.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging;
 using Npgsql;
 using SeedTool;
 using StatementDelivery.Domain.Abstractions;
+using StatementDelivery.Domain.Statements;
 using StatementDelivery.Domain.ValueObjects;
 using StatementDelivery.Persistence.Bulk;
 using StatementDelivery.Persistence.Connections;
@@ -56,6 +57,9 @@ var ids = host.Services.GetRequiredService<IIdGenerator>();
 var bulk = host.Services.GetRequiredService<IBulkWriter>();
 
 var random = new Random(options.Seed);
+
+// Computed once. See SeedKekBytes for what it is and is not.
+var SeedKek = new Lazy<byte[]>(SeedKekBytes);
 DateOnly today = DateOnly.FromDateTime(DateTime.UtcNow);
 StatementPeriod newest = StatementPeriod.ForMonth(today.Year, today.Month).Previous();
 
@@ -219,8 +223,23 @@ async IAsyncEnumerable<StatementRow> GenerateStatements(IEnumerable<AccountRow> 
     }
 }
 
-StatementRow BuildStatement(Guid statementId, AccountRow account, StatementPeriod period, int version) =>
-    new(
+StatementRow BuildStatement(Guid statementId, AccountRow account, StatementPeriod period, int version)
+{
+    short cohort = StatementDelivery.Crypto.Keys.CohortAssignment.ForCustomer(
+        new StatementDelivery.Domain.Identifiers.CustomerId(account.CustomerId));
+
+    string kekId = StatementDelivery.Crypto.Keys.CohortAssignment.KekIdFor(cohort);
+
+    // A fresh key per statement, wrapped in the real envelope. V013 requires an AVAILABLE row to
+    // carry key material, and requires that material to be at least 40 bytes - which a raw 32-byte
+    // key cannot satisfy. Generating a real one is both simpler and more faithful than inventing
+    // padding that would satisfy the constraint while misrepresenting the row.
+    byte[] wrappedDek = StatementDelivery.Crypto.Keys.KeyWrap.Wrap(
+        SeedKek.Value,
+        System.Security.Cryptography.RandomNumberGenerator.GetBytes(32),
+        kekId);
+
+    return new(
         statementId,
         account.Id,
         account.CustomerId,
@@ -230,8 +249,29 @@ StatementRow BuildStatement(Guid statementId, AccountRow account, StatementPerio
         "AVAILABLE",
 
         // The key is COMPUTED from the row, never discovered by listing a bucket. At 2.5 billion
-        // objects a listing is not slow, it is unusable.
-        string.Create(CultureInfo.InvariantCulture, $"statements/{period.Start:yyyy/MM}/{statementId:N}-v{version}.pdf"),
+        // objects a listing is not slow, it is unusable. The shard leads it so that month-end writes
+        // spread across 4,096 prefixes instead of piling into one - see ADR-0023.
+        StorageKeyScheme.KeyFor(
+            new StatementDelivery.Domain.Identifiers.StatementId(statementId),
+            new StatementDelivery.Domain.Identifiers.AccountId(account.Id),
+            period,
+            version),
         random.Next(38_000, 420_000),
         RetentionPolicy.Default.RetainUntil(period),
-        new DateTimeOffset(period.End.AddDays(1).ToDateTime(new TimeOnly(2, 14, 33)), TimeSpan.Zero));
+        new DateTimeOffset(period.End.AddDays(1).ToDateTime(new TimeOnly(2, 14, 33)), TimeSpan.Zero),
+        wrappedDek,
+        kekId,
+
+        // V015 requires a digest on every AVAILABLE row. A real SHA-256, of bytes that do not
+        // exist - exactly as fictional as the storage key beside it, and the right SHAPE, which is
+        // all a volume seeder can honestly claim. 32 bytes per row, ~80 GB at full retention.
+        System.Security.Cryptography.SHA256.HashData(statementId.ToByteArray(bigEndian: true)));
+}
+
+// A cohort key encryption key for the seeder alone, derived from a fixed constant.
+//
+// NOT the development stack's secret, and it opens nothing: the objects these rows name have never
+// existed. Its only job is to produce wrapped DEKs of the right SHAPE and SIZE, so the volume data
+// reflects what 2.5 billion real rows would cost - 61 bytes of BYTEA each, roughly 150 GB.
+static byte[] SeedKekBytes() => System.Security.Cryptography.SHA256.HashData(
+    "statement-delivery/seed-tool/not-a-real-kek"u8);

@@ -9,13 +9,13 @@ using StatementDelivery.Domain.ValueObjects;
 
 namespace IntegrationTests;
 
-/// <summary>One seeded statement, with its bytes on disk.</summary>
+/// <summary>One seeded statement, with its bytes ENCRYPTED in object storage.</summary>
 /// <param name="CustomerId">The owning customer.</param>
 /// <param name="AccountId">The account.</param>
 /// <param name="StatementId">The statement.</param>
-/// <param name="Period">The statement's period start, which is also its partition key.</param>
-/// <param name="StorageKey">The content key, relative to the content root.</param>
-/// <param name="Content">The exact bytes on disk.</param>
+/// <param name="Period">The statement period start, which is also its partition key.</param>
+/// <param name="StorageKey">The object key, computed by StorageKeyScheme.</param>
+/// <param name="Content">The exact PLAINTEXT bytes, for comparison against what is downloaded.</param>
 public sealed record SeededStatement(
     Guid CustomerId,
     Guid AccountId,
@@ -42,28 +42,37 @@ public sealed record IssuedLink(string LinkId, string Url, string Plaintext, Dat
 /// </remarks>
 public static class DownloadScenario
 {
-    /// <summary>Creates a temporary content root, deleted by the caller.</summary>
-    /// <returns>An absolute path to a new empty directory.</returns>
-    public static string CreateContentRoot()
-    {
-        string path = Path.Combine(Path.GetTempPath(), "statement-content-" + Guid.CreateVersion7().ToString("N"));
-        Directory.CreateDirectory(path);
-        return path;
-    }
-
-    /// <summary>Seeds a customer, an account, one AVAILABLE statement, and its file.</summary>
+    /// <summary>
+    /// Seeds a customer, an account, one AVAILABLE statement, and its ENCRYPTED object.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// THE OBJECT IS WRITTEN THROUGH THE PRODUCTION WRITE PATH, not by a fixture that knows the
+    /// format. It mints a real CEK through the real key service, wraps a real DEK under it, and
+    /// encrypts with the real framed cipher - so every redemption test is also, incidentally, a test
+    /// that the writer and the reader agree about the format, the key hierarchy and the AAD.
+    /// </para>
+    /// <para>
+    /// A hand-rolled seeder would be shorter and would assert only that the test agrees with itself.
+    /// </para>
+    /// <para>
+    /// ORDER MATTERS: the customer row goes in FIRST, because customer_key has a foreign key to it
+    /// and the write path mints a CEK before it encrypts anything.
+    /// </para>
+    /// </remarks>
     /// <param name="postgres">The database fixture.</param>
-    /// <param name="contentRoot">Where to write the statement's bytes.</param>
-    /// <param name="sizeBytes">How many bytes to write.</param>
+    /// <param name="minio">The object storage fixture.</param>
+    /// <param name="sizeBytes">How many plaintext bytes to generate.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The seeded statement.</returns>
     public static async Task<SeededStatement> SeedAsync(
         PostgresFixture postgres,
-        string contentRoot,
+        MinioFixture minio,
         int sizeBytes = 4096,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(postgres);
+        ArgumentNullException.ThrowIfNull(minio);
 
         var customer = Guid.CreateVersion7();
         var account = Guid.CreateVersion7();
@@ -72,16 +81,10 @@ public static class DownloadScenario
         DateOnly today = DateOnly.FromDateTime(DateTime.UtcNow);
         StatementPeriod period = StatementPeriod.ForMonth(today.Year, today.Month);
 
-        string storageKey = $"statements/{period.Start:yyyy/MM}/{statement:N}.pdf";
-
         // Distinctive per statement, so a test that redeems a token for A and receives B's bytes
-        // fails on the content rather than passing because both files happened to be zeros.
+        // fails on the content rather than passing because both objects happened to be zeros.
         byte[] content = new byte[sizeBytes];
         System.Security.Cryptography.RandomNumberGenerator.Fill(content.AsSpan(0, Math.Min(1024, sizeBytes)));
-
-        string path = Path.Combine(contentRoot, storageKey.Replace('/', Path.DirectorySeparatorChar));
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        await File.WriteAllBytesAsync(path, content, cancellationToken).ConfigureAwait(false);
 
         await using NpgsqlConnection connection = await postgres.OpenAdminAsync(cancellationToken).ConfigureAwait(false);
 
@@ -90,15 +93,45 @@ public static class DownloadScenario
             INSERT INTO customer (id, external_ref, status) VALUES (@customer, @ref, 'ACTIVE');
             INSERT INTO account (id, customer_id, account_number_masked, product_type, status, opened_at)
                 VALUES (@account, @customer, '****4321', 'SAVINGS', 'ACTIVE', now());
+            """,
+            new { customer, account, @ref = customer.ToString("N") },
+            commandTimeout: 60,
+            cancellationToken: cancellationToken)).ConfigureAwait(false);
+
+        (StatementDelivery.ServiceDefaults.Storage.S3StatementContentStore store, Amazon.S3.IAmazonS3 client) =
+            minio.CreateStore(postgres);
+
+        StatementDelivery.ServiceDefaults.Storage.StoredObject stored;
+
+        using (client)
+        {
+            using var plaintext = new MemoryStream(content, writable: false);
+
+            stored = await store.WriteAsync(
+                plaintext,
+                new StatementDelivery.Crypto.Framing.CryptoContext(statement, customer, 1),
+                new StatementDelivery.Domain.Identifiers.AccountId(account),
+                period,
+                StatementDelivery.Crypto.Keys.CohortAssignment.KekIdFor(
+                    StatementDelivery.Crypto.Keys.CohortAssignment.ForCustomer(
+                        new StatementDelivery.Domain.Identifiers.CustomerId(customer))),
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        // size_bytes is the PLAINTEXT length. It is what Content-Length must say, and the ciphertext
+        // is longer by the framing overhead - a client told the ciphertext length would wait forever
+        // for bytes that do not exist.
+        _ = await connection.ExecuteAsync(new CommandDefinition(
+            """
             INSERT INTO statement (
                 id, account_id, customer_id, period_start, period_end, version, status,
-                storage_key, storage_tier, size_bytes, wrapped_dek, kek_id, iv, auth_tag,
+                storage_key, storage_tier, size_bytes, content_sha256,
+                wrapped_dek, dek_algorithm, kek_id,
                 retain_until, generated_at)
             VALUES (
                 @statement, @account, @customer, @start, @end, 1, 'AVAILABLE',
-                @storageKey, 'STANDARD', @size,
-                '\\xdeadbeef'::bytea, 'kek-test', '\\x0102030405060708090a0b0c'::bytea,
-                '\\x0f0e0d0c0b0a09080706050403020100'::bytea,
+                @storageKey, 'STANDARD', @size, @sha,
+                @wrappedDek, @algorithm, @kekId,
                 @retain, now());
             """,
             new
@@ -106,17 +139,20 @@ public static class DownloadScenario
                 customer,
                 account,
                 statement,
-                @ref = customer.ToString("N"),
                 start = period.Start,
                 end = period.End,
-                storageKey,
-                size = (long)sizeBytes,
+                storageKey = stored.Key,
+                size = stored.PlaintextLength,
+                sha = stored.Envelope.ContentSha256,
+                wrappedDek = stored.Envelope.WrappedDek,
+                algorithm = stored.Envelope.Algorithm,
+                kekId = stored.Envelope.KekId,
                 retain = RetentionPolicy.Default.RetainUntil(period),
             },
             commandTimeout: 60,
             cancellationToken: cancellationToken)).ConfigureAwait(false);
 
-        return new SeededStatement(customer, account, statement, period.Start, storageKey, content);
+        return new SeededStatement(customer, account, statement, period.Start, stored.Key, content);
     }
 
     /// <summary>Issues a link through the real endpoint and returns the plaintext token.</summary>

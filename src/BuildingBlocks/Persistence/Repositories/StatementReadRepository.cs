@@ -27,15 +27,27 @@ public sealed class StatementReadRepository : IStatementReadRepository
     public const int MaxPageSize = 100;
 
     // Explicit column list, never SELECT *. Adding a column to `statement` must not silently change
-    // the shape of this result - and the crypto columns in particular must never be selected by
-    // a read path that serves customers.
+    // the shape of this result.
     private const string Columns = """
         id, account_id, customer_id, period_start, period_end, version, status,
         storage_key, storage_tier, size_bytes, retain_until, generated_at, purged_at
         """;
 
+    // THE CRYPTO COLUMNS ARE ON THE SINGLE-ROW LOOKUP ONLY, NEVER ON THE LIST.
+    //
+    // The list serves the customer-facing catalogue: dozens of rows, none of which is about to be
+    // decrypted. Selecting key material there would put a wrapped DEK for every statement a customer
+    // owns into a response path that has no use for one, and the cheapest way to keep an envelope out
+    // of somewhere it does not belong is not to fetch it.
+    //
+    // The single-row lookup is the download path. It fetches exactly the one envelope it is about to
+    // use, for exactly the one object it is about to open.
+    private const string FindColumns = $"""
+        {Columns}, content_sha256, wrapped_dek, dek_algorithm, kek_id
+        """;
+
     private const string FindSql = $"""
-        SELECT {Columns}
+        SELECT {FindColumns}
           FROM statement
          WHERE id = @id
            AND period_start = @periodStart
@@ -199,6 +211,16 @@ public sealed class StatementReadRepository : IStatementReadRepository
 
         public DateTime? PurgedAt { get; init; }
 
+        // Null on every row that came from the list query, which does not select them. See the
+        // comment on FindColumns.
+        public byte[]? ContentSha256 { get; init; }
+
+        public byte[]? WrappedDek { get; init; }
+
+        public string? DekAlgorithm { get; init; }
+
+        public string? KekId { get; init; }
+
         public Statement ToDomain() => Statement.Rehydrate(
             new StatementId(Id),
             new AccountId(AccountId),
@@ -208,7 +230,25 @@ public sealed class StatementReadRepository : IStatementReadRepository
             Enum.Parse<StatementStatus>(Status, ignoreCase: true),
             RetainUntil,
             GeneratedAt is null ? null : new DateTimeOffset(GeneratedAt.Value, TimeSpan.Zero),
-            StorageKey is null ? null : new StorageLocation(StorageKey, StorageTier, SizeBytes ?? 0),
+            StorageKey is null ? null : new StorageLocation(StorageKey, StorageTier, SizeBytes ?? 0, ToEnvelope()),
             PurgedAt is null ? null : new DateTimeOffset(PurgedAt.Value, TimeSpan.Zero));
+
+        // Null unless BOTH halves are present. A wrapped DEK with no KEK identifier cannot be
+        // unwrapped, and a KEK identifier with no wrapped DEK names a key for nothing - either alone
+        // is a half-written row, and returning a partial envelope would push the discovery of that
+        // into the middle of a download instead of keeping it here.
+        private CryptoEnvelope? ToEnvelope() =>
+            WrappedDek is null || KekId is null
+                ? null
+                : new CryptoEnvelope(
+                    WrappedDek,
+                    KekId,
+                    DekAlgorithm ?? "AES-256-GCM",
+                    ContentSha256,
+
+                    // FROM THE ROW, NOT FROM THE OBJECT. See ContentBinding: taking these from
+                    // inside the ciphertext would compare the object against itself and catch
+                    // nothing.
+                    new ContentBinding(Id, CustomerId, Version));
     }
 }

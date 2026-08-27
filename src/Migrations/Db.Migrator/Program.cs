@@ -1,6 +1,7 @@
 using System.Reflection;
 using Db.Migrator;
 using DbUp;
+using DbUp.Builder;
 using DbUp.Engine;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -59,22 +60,59 @@ var variables = new Dictionary<string, string>(StringComparer.Ordinal)
     ["appMigratorPassword"] = options.AppMigratorPassword,
 };
 
-UpgradeEngine upgrader = DeployChanges.To
-    .PostgresqlDatabase(options.ConnectionString)
-    .WithScriptsEmbeddedInAssembly(
-        Assembly.GetExecutingAssembly(),
-        name => name.EndsWith(".sql", StringComparison.OrdinalIgnoreCase))
-    .WithVariables(variables)
-    .WithPreprocessor(new SessionGuardPreprocessor(options.LockTimeoutSeconds, options.StatementTimeoutSeconds))
+// ---------------------------------------------------------------------------------------------
+// TWO PASSES, BECAUSE ONE TRANSACTION SETTING CANNOT SERVE BOTH KINDS OF SCRIPT.
+//
+// Rule 1 of Scripts/README.md: an index added to a table that already holds rows must be built
+// CONCURRENTLY, or the build holds a lock that blocks writes for its whole duration. And
+// CREATE INDEX CONCURRENTLY CANNOT RUN INSIDE A TRANSACTION - PostgreSQL rejects it outright - so
+// such a script cannot go through WithTransactionPerScript().
+//
+// The convention: a script named `*.notx.sql` runs in the second pass, without a transaction.
+//
+// WHAT THAT COSTS, STATED PLAINLY. Non-transactional scripts run AFTER every transactional one,
+// whatever their version numbers say, so version order is guaranteed only WITHIN a pass. That is
+// acceptable for the one thing this pass exists to do - adding an index to a table that already
+// exists is order-independent - and it is NOT acceptable for anything else. A `.notx.sql` script
+// that alters data or depends on a later migration would break silently on a fresh database and
+// work on an upgraded one, which is the worst kind of migration bug.
+//
+// The other consequence, from the same rule: a CONCURRENTLY build that fails leaves an INVALID
+// index behind that nothing drops automatically. Check for one before re-running.
+// ---------------------------------------------------------------------------------------------
+const string NonTransactionalSuffix = ".notx.sql";
 
-    // One transaction per script, so a script that fails halfway leaves nothing behind and the
-    // journal is never ahead of the schema. The exception is CREATE INDEX CONCURRENTLY, which
-    // cannot run inside a transaction - see Scripts/README.md before writing one.
-    .WithTransactionPerScript()
-    .LogTo(logger)
-    .Build();
+UpgradeEngine BuildUpgrader(bool nonTransactional)
+{
+    UpgradeEngineBuilder engine = DeployChanges.To
+        .PostgresqlDatabase(options.ConnectionString)
+        .WithScriptsEmbeddedInAssembly(
+            Assembly.GetExecutingAssembly(),
+            name => name.EndsWith(".sql", StringComparison.OrdinalIgnoreCase)
+                && name.EndsWith(NonTransactionalSuffix, StringComparison.OrdinalIgnoreCase) == nonTransactional)
+        .WithVariables(variables)
 
-List<string> pending = [.. upgrader.GetScriptsToExecute().Select(script => script.Name)];
+        // statement_timeout is DISABLED for the concurrent pass. A concurrent index build over a
+        // large table legitimately runs for minutes, and the 30-second guard that protects ordinary
+        // DDL would kill it part way through - leaving exactly the INVALID index described above.
+        // lock_timeout stays: CONCURRENTLY still takes brief locks, and waiting forever on one is
+        // still how a migration takes the application down.
+        .WithPreprocessor(new SessionGuardPreprocessor(
+            options.LockTimeoutSeconds,
+            nonTransactional ? 0 : options.StatementTimeoutSeconds))
+        .LogTo(logger);
+
+    return (nonTransactional ? engine.WithoutTransaction() : engine.WithTransactionPerScript()).Build();
+}
+
+UpgradeEngine transactional = BuildUpgrader(nonTransactional: false);
+UpgradeEngine concurrent = BuildUpgrader(nonTransactional: true);
+
+List<string> pending =
+[
+    .. transactional.GetScriptsToExecute().Select(script => script.Name),
+    .. concurrent.GetScriptsToExecute().Select(script => script.Name),
+];
 
 if (pending.Count == 0)
 {
@@ -93,18 +131,24 @@ MigratorLog.ApplyingMigrations(
     options.StatementTimeoutSeconds,
     pendingList);
 
-DatabaseUpgradeResult result = upgrader.PerformUpgrade();
+int appliedCount = 0;
 
-if (!result.Successful)
+foreach (UpgradeEngine upgrader in (UpgradeEngine[])[transactional, concurrent])
 {
-    MigratorLog.MigrationFailed(logger, result.Error, result.ErrorScript?.Name ?? "(unknown)");
+    DatabaseUpgradeResult result = upgrader.PerformUpgrade();
 
-    // Non-zero, so `depends_on: condition: service_completed_successfully` holds every service back.
-    // A service that starts against a half-migrated schema fails in a far more confusing way than
-    // one that never starts at all.
-    return 1;
+    if (!result.Successful)
+    {
+        MigratorLog.MigrationFailed(logger, result.Error, result.ErrorScript?.Name ?? "(unknown)");
+
+        // Non-zero, so `depends_on: condition: service_completed_successfully` holds every service
+        // back. A service that starts against a half-migrated schema fails in a far more confusing
+        // way than one that never starts at all.
+        return 1;
+    }
+
+    appliedCount += result.Scripts.Count();
 }
 
-int appliedCount = result.Scripts.Count();
 MigratorLog.MigrationsApplied(logger, appliedCount);
 return 0;

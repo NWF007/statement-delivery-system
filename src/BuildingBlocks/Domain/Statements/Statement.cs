@@ -24,17 +24,93 @@ public enum StatementStatus
 }
 
 /// <summary>
-/// Where a rendered statement's bytes live.
+/// The envelope needed to decrypt one stored object.
 /// </summary>
 /// <remarks>
-/// Crypto material (wrapped DEK, KEK id, IV, auth tag) is deliberately absent: those columns exist
-/// in the schema but stay NULL until the encryption work lands. Adding them to this value object
-/// now would invite code that reads them before anything writes them.
+/// <para>
+/// EVERYTHING HERE IS SAFE TO PERSIST AND SAFE TO PASS AROUND. <see cref="WrappedDek"/> is the data
+/// key ENCRYPTED by the customer's CEK, which is itself encrypted by a cohort KEK in the key
+/// management service. Holding all of it and nothing else, an attacker has ciphertext and no way to
+/// turn it into a key.
+/// </para>
+/// <para>
+/// NOTE WHAT IS ABSENT: no IV and no auth tag. V006 created columns for both, on the assumption of
+/// a single one-shot encryption per object. The framed format made them obsolete before they were
+/// ever written to - each frame carries its own nonce, derived structurally from a per-object prefix
+/// in the object header, and its own tag. There is no single IV to record. The columns stay NULL and
+/// V013 does not add a constraint pretending otherwise.
+/// </para>
+/// </remarks>
+/// <param name="WrappedDek">The data key, wrapped by the customer encryption key.</param>
+/// <param name="KekId">The cohort KEK alias in force when the object was written.</param>
+/// <param name="Algorithm">How the data key was wrapped, so an algorithm change stays decodable.</param>
+/// <param name="ContentSha256">
+/// The digest of the PLAINTEXT, recorded at write time and verified on the way back out.
+/// </param>
+/// <param name="Binding">
+/// The identity authenticated alongside every frame. SUPPLIED BY THE READER, FROM THE DATABASE.
+/// </param>
+public sealed record CryptoEnvelope(
+    byte[] WrappedDek,
+    string KekId,
+    string Algorithm,
+    byte[]? ContentSha256,
+    ContentBinding Binding);
+
+/// <summary>
+/// The statement identity that is cryptographically bound into a ciphertext.
+/// </summary>
+/// <remarks>
+/// <para>
+/// THIS MUST TRAVEL WITH THE ENVELOPE, AND IT MUST COME FROM THE ROW RATHER THAN FROM THE OBJECT.
+/// That is the whole mechanism, and it is easy to leave out by accident.
+/// </para>
+/// <para>
+/// These three values go into the additional authenticated data of every frame at write time. On
+/// read they are supplied AGAIN, independently, from the statement row - and the decryption fails if
+/// they disagree with what was signed. That is what defeats an attacker who can write to the
+/// database: pointing customer A's <c>storage_key</c> at customer B's object makes the fetch succeed
+/// and the decryption fail.
+/// </para>
+/// <para>
+/// If the reader took the identity from inside the object instead, the check would compare the
+/// object against itself and detect nothing at all - a substituted object carries a substituted
+/// identity, and the two would agree perfectly. An independent source is the entire point.
+/// </para>
+/// </remarks>
+/// <param name="StatementId">Which statement these bytes are.</param>
+/// <param name="CustomerId">Who owns them.</param>
+/// <param name="Version">Which generation. A regenerated statement is a different object.</param>
+public readonly record struct ContentBinding(Guid StatementId, Guid CustomerId, int Version);
+
+/// <summary>
+/// Where a rendered statement's bytes live, and what is needed to read them.
+/// </summary>
+/// <remarks>
+/// <para>
+/// THIS VALUE OBJECT GREW IN PROMPT 4; THE PORT AROUND IT DID NOT. <see cref="Envelope"/> is new,
+/// and <c>IStatementContentStore</c> - the seam the encrypting adapter went behind - is unchanged,
+/// as is every line of request handling in the download gateway.
+/// </para>
+/// <para>
+/// That distinction is worth being precise about, because "zero changes" would be a false claim and
+/// "no logic changes" is a true one. Swapping an adapter is expected to change what the data
+/// carries: the gateway now reads four more columns from a row and hands them to the store. It is
+/// not expected to change how the caller BEHAVES, and it did not - no branch, no condition and no
+/// ordering in the redemption path moved. That is the property the port was defined to buy.
+/// </para>
+/// <para>
+/// Null only for statements written before encryption existed. The encrypting adapter refuses to
+/// serve a location without one rather than guessing the bytes are plaintext - an adapter that
+/// requires an envelope says so by failing when it is absent, rather than by making the type
+/// impossible to construct without one.
+/// </para>
 /// </remarks>
 /// <param name="Key">The object key. Computed from the database, never discovered by listing.</param>
 /// <param name="Tier">The storage tier, for example STANDARD or GLACIER.</param>
 /// <param name="SizeBytes">The stored size.</param>
-public sealed record StorageLocation(string Key, string Tier, long SizeBytes)
+/// <param name="Envelope">The crypto envelope, or null for unencrypted content.</param>
+public sealed record StorageLocation(string Key, string Tier, long SizeBytes, CryptoEnvelope? Envelope = null)
 {
     /// <summary>Gets the object key.</summary>
     public string Key { get; } = string.IsNullOrWhiteSpace(Key)

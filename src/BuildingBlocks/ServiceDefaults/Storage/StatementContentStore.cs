@@ -28,13 +28,16 @@ public sealed record StatementContent(Stream Stream, long Length, string Content
 /// </summary>
 /// <remarks>
 /// <para>
-/// THE SEAM PROMPT 4 REPLACES. Today the only implementation reads plain files from a mounted
-/// volume, unencrypted and deliberately so. The encrypting object-storage adapter goes behind THIS
-/// interface, and the delivery path must not change by a single line when it does.
+/// THE SEAM PROMPT 4 REPLACED, AND IT HELD. The encrypting object-storage adapter
+/// (<c>S3StatementContentStore</c>) went behind this interface and the download gateway's request
+/// handling did not change by a single line - only its dependency registration, and one catch clause
+/// for a failure mode that did not previously exist. This paragraph is written in the past tense
+/// because the claim has been tested rather than intended.
 /// </para>
 /// <para>
-/// That is the design intent, and it is also the test: IF ADDING ENCRYPTION FORCES A CHANGE TO
-/// <c>Download.Gateway</c>, THIS PORT WAS THE WRONG SHAPE. Note in particular what is NOT here -
+/// That was the design intent, and it was also the test: IF ADDING ENCRYPTION HAD FORCED A CHANGE TO
+/// <c>Download.Gateway</c>, THIS PORT WOULD HAVE BEEN THE WRONG SHAPE. Note in particular what is
+/// NOT here -
 /// no key identifier, no IV, no auth tag, no decryption callback. The gateway asks for bytes at a
 /// location and receives a stream; whether those bytes were encrypted at rest is entirely the
 /// adapter's business.
@@ -69,7 +72,7 @@ public sealed class FileSystemContentStoreOptions
     public const string SectionName = "ContentStore";
 
     /// <summary>Gets or sets the root directory holding statement files.</summary>
-    /// <remarks>Mounted as a compose volume. Replaced by a bucket in Prompt 4.</remarks>
+    /// <remarks>A temporary directory in tests. No deployed service binds this section any more.</remarks>
     [Required(AllowEmptyStrings = false)]
     public string RootPath { get; set; } = string.Empty;
 }
@@ -79,13 +82,15 @@ public sealed class FileSystemContentStoreOptions
 /// </summary>
 /// <remarks>
 /// <para>
-/// UNENCRYPTED, DELIBERATELY. Encryption is Prompt 4's work, and pretending to encrypt here - with
-/// a key in configuration, say - would be worse than not encrypting: it would look like a control
-/// while providing none, and the real implementation would then have to be argued for against
-/// something that appeared to already exist.
+/// UNENCRYPTED, AND KEPT ON PURPOSE. No deployed service registers this any more - Prompt 4 swapped
+/// every one of them to the encrypting S3 adapter. It survives as the TEST DOUBLE for the port:
+/// exercising <c>IStatementContentStore</c> without a bucket, a key hierarchy or a container, which
+/// is what keeps the port's own contract (null for absent, a forward-only stream, a traversal guard
+/// on the key) testable in isolation from everything that now sits behind it.
 /// </para>
 /// <para>
-/// Local development and tests only. It has no place in a deployed environment.
+/// ⚠ IF THIS EVER APPEARS IN A SERVICE'S Program.cs AGAIN, that service is serving statements in
+/// plaintext from a local volume. There is no configuration that makes that correct.
 /// </para>
 /// </remarks>
 public sealed class FileSystemStatementContentStore : IStatementContentStore

@@ -12,6 +12,7 @@ WORKDIR /src
 # ProjectReference elements resolve against, and restore fails.
 COPY Directory.Build.props Directory.Packages.props global.json ./
 COPY src/BuildingBlocks/Domain/Domain.csproj                   src/BuildingBlocks/Domain/
+COPY src/BuildingBlocks/Crypto/Crypto.csproj                   src/BuildingBlocks/Crypto/
 COPY src/BuildingBlocks/Contracts/Contracts.csproj             src/BuildingBlocks/Contracts/
 COPY src/BuildingBlocks/Messaging/Messaging.csproj             src/BuildingBlocks/Messaging/
 COPY src/BuildingBlocks/Persistence/Persistence.csproj         src/BuildingBlocks/Persistence/

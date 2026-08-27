@@ -2,10 +2,12 @@
 
 [![CI](https://github.com/OWNER/statement-delivery/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/statement-delivery/actions/workflows/ci.yml)
 
-> **Status: one vertical slice.** The platform scaffold is complete and there is now a working
-> read path: a customer can authenticate and list their own statements — and cannot list anyone
-> else's — with every access, including every denial, recorded in a tamper-evident hash chain.
-> Tokens, encryption and PDF generation are deliberately still absent. See [Non-goals](#non-goals).
+> **Status: the delivery path is complete and encrypted end to end.** A customer can authenticate,
+> list their own statements — and not anyone else's — issue a single-use download link, and redeem
+> it for bytes that were **encrypted at rest with a framed AEAD** and are decrypted and
+> authenticated frame by frame as they stream. Every access, including every denial, lands in a
+> tamper-evident hash chain. PDF generation and retention purge are deliberately still absent. See
+> [Non-goals](#non-goals).
 
 ## Problem
 
@@ -190,6 +192,11 @@ silently, and only under load.
 | [0016](docs/adr/0016-no-range-request-support.md) | No HTTP range requests — resumability versus single use |
 | [0017](docs/adr/0017-consume-before-stream.md) | Consume the token before streaming, and never release it on abort |
 | [0018](docs/adr/0018-per-ip-not-per-token-rate-limiting.md) | Rate limit per IP and per customer, never per token |
+| [0019](docs/adr/0019-framed-aead-over-one-shot-gcm.md) | A framed AEAD over one-shot GCM — .NET will not stream it, and why that is right |
+| [0020](docs/adr/0020-three-tier-key-hierarchy.md) | Cohort KEK → per-customer CEK → per-object DEK — the $26M/month arithmetic |
+| [0021](docs/adr/0021-envelope-encryption-over-sse-kms.md) | Client-side envelope encryption rather than SSE-KMS — crypto-erasure decides it |
+| [0022](docs/adr/0022-object-lock-compliance-mode.md) | Object Lock in COMPLIANCE mode, GOVERNANCE in Development |
+| [0023](docs/adr/0023-high-cardinality-storage-key-prefix.md) | A hashed shard leads the storage key, not the date |
 
 Each ADR ends with a **Revisit when** section: two to four falsifiable triggers with concrete
 thresholds. It turns a justification into a claim that can be shown to be wrong.
@@ -225,12 +232,19 @@ See [ADR-0010](docs/adr/0010-sharded-audit-hash-chains.md).
 
 Deliberately **absent**, and absent is the correct state for this phase:
 
-- `download_token` — no table, no entity, no endpoint. The security core deserves its own pass.
-- Encryption and key management. `statement` carries `wrapped_dek`, `kek_id`, `iv` and `auth_tag`
-  as nullable columns; they stay `NULL`.
-- PDF generation and statement runs.
-- Retention purge, legal hold enforcement, crypto-erasure. `legal_hold` and `customer_key` exist as
-  tables and are unused.
+- PDF generation and statement runs. `Generation.Worker` has its lease, its batch loop and now its
+  encrypting writer; what it lacks is anything that renders a PDF.
+- Retention purge, legal hold enforcement, and the execution of crypto-erasure.
+  `ICustomerKeyService.DestroyCekAsync` throws `NotImplementedException` on purpose: erasure is
+  irreversible and the code that decides whether it is *lawful yet* does not exist.
+  ⚠ **Object Lock expiry is not deletion** — an expired retention makes an object eligible for
+  deletion and removes nothing. Without that purge job the storage bill runs forever. See
+  [ADR-0022](docs/adr/0022-object-lock-compliance-mode.md).
+- KMS key rotation. `kek_id` is recorded per object so rotation need not rewrite history, and
+  `idx_customer_key_cohort` exists so a cohort can be walked, but nothing rotates anything yet.
+- Real AWS KMS in CI. `AwsKmsKeyProvider` is implemented; the local stack uses `LocalKeyProvider`,
+  which derives every cohort key from a configuration secret and **refuses to start outside
+  Development**.
 - The `IChainAnchor` implementation — interface and no-op only.
 - Kubernetes manifests, Helm charts, Terraform.
 - An Aspire AppHost — see [ADR-0004](docs/adr/0004-aspire-dashboard-without-apphost.md).
@@ -270,7 +284,7 @@ Two things that will otherwise cost you an afternoon:
 | `UnitTests` | UUIDv7 monotonicity and endianness, keyset cursors, redaction rules, readiness gate. |
 | `ArchitectureTests` | Layering, as executable rules. Reads the `.csproj` graph, so a reference the compiler optimises away is still caught. |
 | `SecurityTests` | Controls that live in configuration: chiseled non-root images, no secrets in `appsettings`, PgBouncer pooling mode, JWT startup validation. |
-| `IntegrationTests` | Real PostgreSQL via Testcontainers: migrations, GRANT enforcement, leader election and fencing, partition maintenance, `EXPLAIN` proving partition pruning, binary COPY. |
+| `IntegrationTests` | Real PostgreSQL **and real MinIO** via Testcontainers: migrations, GRANT enforcement, leader election and fencing, partition maintenance, `EXPLAIN` proving partition pruning, binary COPY, Object Lock actually refusing a delete, and an encrypted 200 MB download that stays O(1) in memory. |
 
 ### Seeding volume
 

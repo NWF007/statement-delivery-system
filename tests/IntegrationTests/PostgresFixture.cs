@@ -1,6 +1,7 @@
 using System.Reflection;
 using Db.Migrator;
 using DbUp;
+using DbUp.Builder;
 using DbUp.Engine;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -117,30 +118,44 @@ public sealed class PostgresFixture : IAsyncLifetime
         await _container.StartAsync().ConfigureAwait(false);
         AdminConnectionString = _container.GetConnectionString();
 
-        DatabaseUpgradeResult result = DeployChanges.To
-            .PostgresqlDatabase(AdminConnectionString)
-            .WithScriptsEmbeddedInAssembly(
-                typeof(MigrationOptions).Assembly,
-                name => name.EndsWith(".sql", StringComparison.OrdinalIgnoreCase))
-            .WithVariables(new Dictionary<string, string>(StringComparer.Ordinal)
-            {
-                ["appDeliveryPassword"] = RolePassword,
-                ["appDownloadPassword"] = RolePassword,
-                ["appGenerationPassword"] = RolePassword,
-                ["appRetentionPassword"] = RolePassword,
-                ["appMigratorPassword"] = RolePassword,
-            })
-            .WithPreprocessor(new SessionGuardPreprocessor(3, 30))
-            .WithTransactionPerScript()
-            .LogToNowhere()
-            .Build()
-            .PerformUpgrade();
-
-        if (!result.Successful)
+        // TWO PASSES, MIRRORING Db.Migrator/Program.cs. Scripts named *.notx.sql run outside a
+        // transaction, because CREATE INDEX CONCURRENTLY cannot run inside one.
+        //
+        // This fixture MUST match the real runner. A test database built by a different procedure
+        // from the production one is a test database that proves nothing about production - and this
+        // particular divergence would not be subtle: running V014 inside a transaction fails
+        // outright, so every integration test would go red at once with an error about CONCURRENTLY
+        // that points nowhere near the fixture.
+        foreach (bool nonTransactional in (bool[])[false, true])
         {
-            throw new InvalidOperationException(
-                $"Migrations failed on {result.ErrorScript?.Name ?? "(unknown)"}.",
-                result.Error);
+            UpgradeEngineBuilder engine = DeployChanges.To
+                .PostgresqlDatabase(AdminConnectionString)
+                .WithScriptsEmbeddedInAssembly(
+                    typeof(MigrationOptions).Assembly,
+                    name => name.EndsWith(".sql", StringComparison.OrdinalIgnoreCase)
+                        && name.EndsWith(".notx.sql", StringComparison.OrdinalIgnoreCase) == nonTransactional)
+                .WithVariables(new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["appDeliveryPassword"] = RolePassword,
+                    ["appDownloadPassword"] = RolePassword,
+                    ["appGenerationPassword"] = RolePassword,
+                    ["appRetentionPassword"] = RolePassword,
+                    ["appMigratorPassword"] = RolePassword,
+                })
+                .WithPreprocessor(new SessionGuardPreprocessor(3, nonTransactional ? 0 : 30))
+                .LogToNowhere();
+
+            DatabaseUpgradeResult result =
+                (nonTransactional ? engine.WithoutTransaction() : engine.WithTransactionPerScript())
+                .Build()
+                .PerformUpgrade();
+
+            if (!result.Successful)
+            {
+                throw new InvalidOperationException(
+                    $"Migrations failed on {result.ErrorScript?.Name ?? "(unknown)"}.",
+                    result.Error);
+            }
         }
 
         // A migrated but unanalysed database gives the planner no row estimates, and the partition
@@ -173,7 +188,7 @@ public sealed class PostgresFixture : IAsyncLifetime
 /// seconds; paying that per test class is how an integration suite becomes something people skip.
 /// </remarks>
 [CollectionDefinition(Name)]
-public sealed class PostgresCollection : ICollectionFixture<PostgresFixture>
+public sealed class PostgresCollection : ICollectionFixture<PostgresFixture>, ICollectionFixture<MinioFixture>
 {
     /// <summary>The collection name.</summary>
     public const string Name = "postgres";

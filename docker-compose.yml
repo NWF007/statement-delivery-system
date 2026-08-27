@@ -39,6 +39,15 @@ x-service-deps: &service-deps
     condition: service_healthy
   minio:
     condition: service_healthy
+  # ADDED IN PROMPT 4. A healthy MinIO is not the same thing as a PROVISIONED bucket, and since
+  # Prompt 4 the difference is observable: ObjectLockHealthCheck is tagged `ready`, so a service
+  # that starts before `createbuckets` finishes reports NOT READY until the next probe. Without
+  # this the stack still converges, but `docker compose up` shows unready services for no reason a
+  # reader can see, and a FAILED `mc retention set` shows up only as a readiness flap rather than
+  # stopping the stack. One-shot container, no restart policy, so completed_successfully is the
+  # correct condition and it needs no health check of its own.
+  createbuckets:
+    condition: service_completed_successfully
   aspire-dashboard:
     # service_started, NOT service_healthy, and deliberately so. A telemetry backend must never
     # gate application startup: if the dashboard is down the correct behaviour is a service that
@@ -212,6 +221,22 @@ services:
       start_period: 10s
     networks: [statement-delivery]
 
+  # ⚠ PROMPT 4 REMEDIATION - THE BUCKET IS NOW CREATED WITH OBJECT LOCK, AND IT HAD TO BE RECREATED.
+  #
+  # The original definition created the bucket and enabled versioning. It did NOT enable Object
+  # Lock, and OBJECT LOCK CANNOT BE ENABLED ON AN EXISTING BUCKET: MinIO requires it at creation
+  # time (`mc mb --with-lock`), and so does S3. Newer MinIO AIStor releases relax this; the
+  # community image pinned above does not - and since S3 has the same constraint, the local
+  # environment should mirror production behaviour rather than mask it.
+  #
+  # Consequence, stated plainly: THIS IS NOT A CONFIG CHANGE. An existing bucket must be destroyed
+  # and recreated:
+  #
+  #     docker compose down -v && docker compose up --build -d
+  #
+  # Anything less leaves the old lock-less bucket in place and every Object Lock operation fails
+  # with a confusing error. Locally that costs nothing. In production it would be a 470 TB
+  # migration - which is exactly why it is worth getting right in the scaffold.
   createbuckets:
     image: minio/mc:RELEASE.2025-08-13T08-35-41Z
     depends_on:
@@ -227,14 +252,29 @@ services:
       - |
         set -e
         mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"
-        mc mb --ignore-existing "local/$${STATEMENTS_BUCKET}"
-        # VERSIONING IS NOT OPTIONAL HERE. Statements are kept for a seven-year regulatory
-        # retention period and must be immutable; versioning is what turns an accidental
-        # overwrite into a new version rather than a destroyed record. It also underpins object
-        # locking, which is how the immutability claim is actually enforced later.
-        mc version enable "local/$${STATEMENTS_BUCKET}"
+
+        # --with-lock. Enabling object locking also enables versioning PERMANENTLY - versioning can
+        # then never be disabled, which is the property that makes the immutability claim real
+        # rather than a setting somebody can turn off during an incident.
+        mc mb --with-lock --ignore-existing "local/$${STATEMENTS_BUCKET}"
+
+        # COMPLIANCE, NOT GOVERNANCE. Governance mode lets a sufficiently privileged user shorten
+        # or bypass retention, which makes it a convention with a strongly worded name rather than
+        # a control. For a regulatory record that is not sufficient. 2555d is seven years, in days
+        # rather than years so the value is unambiguous and matches RetentionPolicy.Default.
+        #
+        # This is the BUCKET DEFAULT. The application still sets a mode per object, and in
+        # Development it sets GOVERNANCE so a developer can delete test objects - see
+        # ObjectLockOptions for why that asymmetry is deliberate rather than sloppy.
+        mc retention set --default COMPLIANCE 2555d "local/$${STATEMENTS_BUCKET}"
         mc anonymous set none "local/$${STATEMENTS_BUCKET}"
-        echo "bucket $${STATEMENTS_BUCKET} ready with versioning enabled"
+
+        # These two print the RESULTING configuration, so the container logs prove the settings
+        # applied rather than merely that the commands were issued. If they print nothing, the
+        # bucket is wrong and every object written to it is unretained.
+        mc version info "local/$${STATEMENTS_BUCKET}"
+        mc retention info "local/$${STATEMENTS_BUCKET}"
+        echo "bucket $${STATEMENTS_BUCKET} ready with object lock (COMPLIANCE 2555d) and versioning"
     networks: [statement-delivery]
 
   # -------------------------------------------------------------------------------------------
@@ -322,14 +362,16 @@ services:
       ObjectStorage__BucketName: ${STATEMENTS_BUCKET}
       ObjectStorage__AccessKey: ${MINIO_ROOT_USER}
       ObjectStorage__SecretKey: ${MINIO_ROOT_PASSWORD}
-      ContentStore__RootPath: /var/lib/statement-delivery/content
+      # GOVERNANCE in Development so test objects can be cleaned up; COMPLIANCE in Staging and
+      # Production. Set explicitly rather than defaulted, in both directions - see ObjectLockOptions.
+      ObjectStorage__Lock__Mode: GOVERNANCE
+      Crypto__KeyProvider: Local
+      Crypto__LocalKeys__MasterSecret: ${CRYPTO_MASTER_SECRET}
     ports:
       - "${DOWNLOAD_GATEWAY_PORT:-8082}:8080"
-    volumes:
-      # Shared with generation-worker, which writes what this service reads. A filesystem store is
-      # the Prompt 3 adapter behind IStatementContentStore; Prompt 4 swaps it for encrypted object
-      # storage and this volume goes away.
-      - statement-content:/var/lib/statement-delivery/content
+    # THE statement-content VOLUME IS GONE. It backed the Prompt 3 filesystem adapter behind
+    # IStatementContentStore, which the encrypting object-storage adapter has replaced. A volume
+    # nothing reads is somewhere stale plaintext sits until someone finds it.
     networks: [statement-delivery]
 
   generation-worker:
@@ -348,6 +390,9 @@ services:
       ObjectStorage__BucketName: ${STATEMENTS_BUCKET}
       ObjectStorage__AccessKey: ${MINIO_ROOT_USER}
       ObjectStorage__SecretKey: ${MINIO_ROOT_PASSWORD}
+      ObjectStorage__Lock__Mode: GOVERNANCE
+      Crypto__KeyProvider: Local
+      Crypto__LocalKeys__MasterSecret: ${CRYPTO_MASTER_SECRET}
     # No published ports. This is the service that scales 0 -> 400 at month-end; a host port
     # binding would make the second replica fail to start.
     networks: [statement-delivery]
@@ -364,17 +409,20 @@ services:
       Postgres__PrimaryConnectionString: Host=pgbouncer;Port=6432;Database=statements_retention;Username=app_retention;Password=${APP_RETENTION_PASSWORD}
       Postgres__ReplicaConnectionString: ${POSTGRES_REPLICA_CONNECTION}
       Cache__ConnectionString: redis:6379
-      ObjectStorage__ServiceUrl: http://minio:9000
-      ObjectStorage__BucketName: ${STATEMENTS_BUCKET}
-      ObjectStorage__AccessKey: ${MINIO_ROOT_USER}
-      ObjectStorage__SecretKey: ${MINIO_ROOT_PASSWORD}
+      # NO OBJECT STORAGE CREDENTIALS, deliberately, and they were here before Prompt 4.
+      #
+      # Retention.Worker resolves neither IStatementContentStore nor IAmazonS3 - it cannot read or
+      # write an object until Prompt 6 gives it the purge job. Holding a bucket access key it never
+      # uses is a credential with no purpose, on the one service that will eventually be the only
+      # one in the system allowed to DELETE. Prompt 6 adds them back together with
+      # AddCrypto()/AddEncryptedContentStore(), so the service also gets the Object Lock readiness
+      # check at the same moment it gains the ability to touch an object.
     # No published ports and no container_name, so this can be scaled to prove leader election:
     #     docker compose up -d --scale retention-worker=3
     #     docker compose logs retention-worker | grep -c "lease acquired"   # -> 1
     networks: [statement-delivery]
 
 volumes:
-  statement-content:
   postgres-data:
   postgres-replica-data:
   minio-data:

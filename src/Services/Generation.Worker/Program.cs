@@ -1,5 +1,6 @@
 using Generation.Worker;
 using Generation.Worker.Configuration;
+using StatementDelivery.Crypto;
 using StatementDelivery.Persistence;
 using StatementDelivery.ServiceDefaults;
 using StatementDelivery.ServiceDefaults.HealthChecks;
@@ -20,7 +21,14 @@ WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 builder.AddServiceDefaults();
 builder.AddPersistence(serviceName: "generation-worker");
 builder.AddObjectStorage();
+builder.AddCrypto();
 builder.AddGenerationWorker();
+
+// includeWriter: true. This is the only service that may WRITE statement content - it is the one
+// that renders it. The download gateway gets the reader alone, so "the internet-facing service
+// cannot create or overwrite a statement" is enforced by what it can inject rather than by
+// convention.
+builder.AddEncryptedContentStore(includeWriter: true);
 
 WebApplication app = builder.Build();
 

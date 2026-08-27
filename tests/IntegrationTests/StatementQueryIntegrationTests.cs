@@ -70,10 +70,16 @@ public sealed partial class StatementQueryIntegrationTests
             """
             INSERT INTO statement (
                 id, account_id, customer_id, period_start, period_end, version, status,
-                storage_key, size_bytes, retain_until, generated_at)
+                storage_key, size_bytes, content_sha256,
+                wrapped_dek, dek_algorithm, kek_id, retain_until, generated_at)
             VALUES (
                 @id, @account, @customer, @start, @end, @version, 'AVAILABLE',
-                @key, 42000, @retain, now());
+                @key, 42000,
+
+                -- An AVAILABLE row must now be both READABLE (V013: key material) and VERIFIABLE
+                -- (V015: a 32-byte digest). This seeder predates both and would fail at the INSERT.
+                decode(repeat('ab', 32), 'hex'),
+                decode(repeat('cd', 61), 'hex'), 'AES-256-GCM', 'kek-test', @retain, now());
             """,
             new
             {

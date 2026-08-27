@@ -102,6 +102,11 @@ public static class PersistenceServiceCollectionExtensions
         builder.Services.AddSingleton<IUnitOfWork, NpgsqlUnitOfWork>();
         builder.Services.AddSingleton<IDownloadTokenRepository, DownloadTokenRepository>();
 
+        // The customer_key adapter behind the Crypto project's port. Registered here rather than in
+        // AddCrypto because it is the only piece of the key hierarchy that touches a database, and
+        // the composition rule in this repository is that adapters register beside their driver.
+        builder.Services.AddSingleton<StatementDelivery.Crypto.Keys.ICustomerKeyStore, Keys.CustomerKeyRepository>();
+
         builder.Services.AddSingleton<IAuditWriter, PostgresAuditWriter>();
         builder.Services.AddSingleton<IAuditVerifier, PostgresAuditVerifier>();
 

@@ -119,6 +119,7 @@ jobs:
           dotnet test --project tests/UnitTests/UnitTests.csproj
           --configuration Release
           --
+          --filter-not-trait "Category=RequiresAws"
           --coverage --coverage-output-format cobertura --coverage-output unit.cobertura.xml
 
       - name: Architecture tests
@@ -126,6 +127,7 @@ jobs:
           dotnet test --project tests/ArchitectureTests/ArchitectureTests.csproj
           --configuration Release
           --
+          --filter-not-trait "Category=RequiresAws"
           --coverage --coverage-output-format cobertura --coverage-output architecture.cobertura.xml
 
       - name: Security tests
@@ -133,6 +135,7 @@ jobs:
           dotnet test --project tests/SecurityTests/SecurityTests.csproj
           --configuration Release
           --
+          --filter-not-trait "Category=RequiresAws"
           --coverage --coverage-output-format cobertura --coverage-output security.cobertura.xml
 
       # Coverage is diagnostic output, not a gate. continue-on-error because a full artifact
@@ -177,8 +180,15 @@ jobs:
 
       - run: dotnet restore StatementDelivery.sln
 
+      # --filter-not-trait excludes KmsKeyProviderTests, which need a real (or LocalStack) KMS
+      # endpoint. A suite that silently needs cloud credentials is green on one machine and red
+      # everywhere else; see the remarks on that class for how to run them deliberately.
       - name: Integration tests
-        run: dotnet test --project tests/IntegrationTests/IntegrationTests.csproj --configuration Release
+        run: >
+          dotnet test --project tests/IntegrationTests/IntegrationTests.csproj
+          --configuration Release
+          --
+          --filter-not-trait "Category=RequiresAws"
 
       # ACCEPTANCE CHECK 36. Repeated, not run once.
       #

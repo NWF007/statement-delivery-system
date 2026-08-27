@@ -17,7 +17,11 @@ WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
 builder.AddServiceDefaults();
 builder.AddPersistence(serviceName: "retention-worker");
-builder.AddObjectStorage();
+// NO OBJECT STORAGE HERE UNTIL PROMPT 6. This service resolves nothing that touches a bucket, so
+// AddObjectStorage() only registered a client nothing injected and a readiness check on a bucket it
+// never reads - while requiring credentials it had no use for. Prompt 6's purge job adds it back
+// alongside AddCrypto() and AddEncryptedContentStore(includeWriter: false), so the Object Lock
+// verification arrives in the same commit as the ability to delete an object.
 builder.AddRetentionWorker();
 
 WebApplication app = builder.Build();

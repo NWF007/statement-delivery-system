@@ -26,7 +26,8 @@ namespace IntegrationTests;
 public sealed class DownloadGatewayFactory : WebApplicationFactory<GatewayRateLimitOptions>
 {
     private readonly string _connectionString;
-    private readonly string _contentRoot;
+    private readonly string _serviceUrl;
+    private readonly string _bucket;
     private readonly int _redeemPerMinute;
     private readonly int _permitLimit;
     private readonly int _denialFloorMilliseconds;
@@ -34,7 +35,7 @@ public sealed class DownloadGatewayFactory : WebApplicationFactory<GatewayRateLi
 
     /// <summary>Initialises a new instance of the <see cref="DownloadGatewayFactory"/> class.</summary>
     /// <param name="connectionString">The app_download connection string for the test container.</param>
-    /// <param name="contentRoot">The directory holding statement files.</param>
+    /// <param name="serviceUrl">The MinIO endpoint holding the encrypted objects.</param>
     /// <param name="redeemPerMinute">
     /// The fleet-wide per-address redemption budget. Raised by the concurrency test, which fires
     /// fifty requests from one address on purpose and would otherwise be measuring the rate limiter
@@ -50,16 +51,19 @@ public sealed class DownloadGatewayFactory : WebApplicationFactory<GatewayRateLi
     /// The process-wide streaming concurrency permit count. Lowered to 1 by the test that proves a
     /// concurrency-limiter rejection still carries Retry-After.
     /// </param>
+    /// <param name="bucket">The bucket holding the encrypted objects.</param>
     public DownloadGatewayFactory(
         string connectionString,
-        string contentRoot,
+        string serviceUrl,
         int redeemPerMinute = 30,
         int permitLimit = 120,
         int denialFloorMilliseconds = 0,
-        int maxConcurrentDownloads = 128)
+        int maxConcurrentDownloads = 128,
+        string bucket = MinioFixture.BucketName)
     {
         _connectionString = connectionString;
-        _contentRoot = contentRoot;
+        _serviceUrl = serviceUrl;
+        _bucket = bucket;
         _redeemPerMinute = redeemPerMinute;
         _permitLimit = permitLimit;
         _denialFloorMilliseconds = denialFloorMilliseconds;
@@ -79,14 +83,24 @@ public sealed class DownloadGatewayFactory : WebApplicationFactory<GatewayRateLi
                 ["Postgres:PrimaryConnectionString"] = _connectionString,
                 ["Postgres:MaxPoolSize"] = "60",
 
-                ["ContentStore:RootPath"] = _contentRoot,
+                // PROMPT 4: real object storage, real encryption. The filesystem content store and
+                // its ContentStore:RootPath are gone - the gateway reads encrypted objects from
+                // MinIO now, exactly as it reads them from S3 in a deployed environment.
+                ["ObjectStorage:BucketName"] = _bucket,
+                ["ObjectStorage:ServiceUrl"] = _serviceUrl,
+                ["ObjectStorage:AccessKey"] = MinioFixture.AccessKey,
+                ["ObjectStorage:SecretKey"] = MinioFixture.SecretKey,
+                ["ObjectStorage:ForcePathStyle"] = "true",
 
-                // Download.Gateway calls AddObjectStorage(), whose BucketName is [Required] and
-                // validated on start - so without this the host refuses to boot and every test in
-                // this file fails at construction rather than on its assertion. Prompt 3 uses the
-                // filesystem content store and never touches the bucket; Prompt 4 makes it real.
-                ["ObjectStorage:BucketName"] = "statements-test",
-                ["ObjectStorage:ServiceUrl"] = "http://localhost:9000",
+                // GOVERNANCE, so the storage tests can clean up after themselves. The bucket default
+                // is still COMPLIANCE; see ObjectLockOptions for why the two differ by environment.
+                ["ObjectStorage:Lock:Mode"] = "GOVERNANCE",
+
+                // The SAME master secret the seeder used. If these ever diverge the failure is a
+                // decryption error deep inside a download, which is a very indirect way to discover
+                // a typo in a fixture - hence one constant, referenced twice.
+                ["Crypto:KeyProvider"] = "Local",
+                ["Crypto:LocalKeys:MasterSecret"] = MinioFixture.MasterSecret,
 
                 ["Audit:ChainCount"] = "16",
                 ["Partitioning:MaintenanceEnabled"] = "false",

@@ -236,10 +236,44 @@ public static class DownloadEndpoints
             return Deny();
         }
 
-        // STEP 8. Open the stream. Prompt 4 swaps this adapter for an encrypting one and nothing
-        // below changes - which is the test of whether this port was the right shape.
-        StatementContent? statementContent = await content
-            .OpenReadAsync(resolved.Storage, cancellationToken).ConfigureAwait(false);
+        // STEP 8. Open the stream. Prompt 4 swapped this adapter for an encrypting one and NOT ONE
+        // LINE BELOW CHANGED - which was the test of whether this port was the right shape.
+        //
+        // What did change is the catch. A decryption failure is not a caller error and has no
+        // equivalent in the filesystem adapter, so there was nothing here to handle it: it would
+        // have propagated to the global exception handler as a 500, after the response had already
+        // begun. That is the one behaviour the design cannot allow, so this block exists.
+        StatementContent? statementContent;
+
+        try
+        {
+            statementContent = await content
+                .OpenReadAsync(resolved.Storage, cancellationToken).ConfigureAwait(false);
+        }
+        catch (StatementDelivery.Crypto.Framing.CiphertextIntegrityException ex)
+        {
+            // A DECRYPTION FAILURE IS AN INCIDENT, NOT A DENIAL - but it answers like one.
+            //
+            // The token was valid. Ownership was proven. The row was found. And the bytes it points
+            // at did not authenticate, which means the object was corrupted, truncated, substituted
+            // or tampered with - or the row was rewritten to point at somebody else's object, which
+            // is the attack the frame AAD exists to defeat.
+            //
+            // The caller gets the same 404 as every other failure, because telling them anything
+            // else would confirm which of those it was. The metric pages an operator.
+            metrics.DecryptionFailed();
+
+            await audit.RecordAsync(
+                http, AuditAction.AccessDenied, AuditOutcome.Error,
+                consumption.CustomerId, consumption.StatementId, DenialReason.DecryptionFailed,
+                Detail(
+                    ("token_hash", hash.ToString()),
+                    ("link_id", consumption.Id.ToString()),
+                    ("integrity_failure", ex.Reason.ToString())),
+                cancellationToken).ConfigureAwait(false);
+
+            return Deny();
+        }
 
         if (statementContent is null)
         {
@@ -396,6 +430,65 @@ public static class DownloadEndpoints
 
                 await httpContext.Response.Body.FlushAsync(cancellationToken).ConfigureAwait(false);
             }
+            catch (StatementDelivery.Crypto.Framing.CiphertextIntegrityException ex)
+            {
+                // ⚠ A FRAME FAILED TO AUTHENTICATE PART WAY THROUGH THE TRANSFER.
+                //
+                // This clause has to exist and has to come first. The header is verified before the
+                // response starts (see PrimeAsync), but everything else the format defends against -
+                // a flipped ciphertext byte, a reordered frame, a DROPPED FINAL FRAME, a
+                // content_sha256 mismatch - is only detectable while streaming. Without this catch
+                // those escape: CiphertextIntegrityException is deliberately neither an IOException
+                // nor a CryptographicException, so the clause below does not see it, and it reaches
+                // the global handler. On the first frame that produces a 500 with a traceId instead
+                // of the uniform 404; later it kills the response mid-body with no audit record and
+                // no metric - which is precisely the case an operator most needs to hear about.
+                _metrics.DecryptionFailed();
+
+                await _audit.RecordAsync(
+                    httpContext,
+                    AuditAction.AccessDenied,
+                    AuditOutcome.Error,
+                    _consumption.CustomerId,
+                    _consumption.StatementId,
+                    DenialReason.DecryptionFailed,
+                    Detail(
+                        ("token_hash", _hash.ToString()),
+                        ("link_id", _consumption.Id.ToString()),
+                        ("integrity_failure", ex.Reason.ToString()),
+                        ("bytes_sent", written)),
+
+                    // CancellationToken.None deliberately, as on the incomplete path: the request may
+                    // already be tearing down and this record must survive it.
+                    CancellationToken.None).ConfigureAwait(false);
+
+                if (httpContext.Response.HasStarted)
+                {
+                    // ABORT, DO NOT LET IT END CLEANLY. Bytes are already on the wire - that is the
+                    // limitation ADR-0019 §A5 names and accepts - so the only thing still under our
+                    // control is whether the client can tell. A clean end to a 200 with a
+                    // Content-Length it never reached is a silently truncated statement; a reset
+                    // connection is an unambiguous failure that every HTTP client surfaces.
+                    httpContext.Abort();
+                    return;
+                }
+
+                // Nothing has left yet, so the uniform denial is still available and is what the
+                // caller gets - byte-identical to an expired token, a revoked one and one that never
+                // existed.
+                //
+                // CLEAR FIRST, AND THIS IS NOT OPTIONAL. ApplySecurityHeaders has already staged a
+                // 200, a Content-Length of the whole statement, and a PDF Content-Disposition. Those
+                // are still only staged - nothing has flushed - but writing the denial over the top
+                // of them would emit a 404 announcing several megabytes it will never send, which
+                // leaves the client waiting on a body that never arrives and is trivially
+                // distinguishable from every other denial. Clear() resets status, headers and the
+                // buffered body, which is exactly the state Deny() expects.
+                httpContext.Response.Clear();
+
+                await Deny().ExecuteAsync(httpContext).ConfigureAwait(false);
+                return;
+            }
             catch (Exception ex) when (ex is OperationCanceledException or IOException)
             {
                 // The client hung up. The token STAYS CONSUMED - see ADR-0017. Recorded so the
@@ -407,7 +500,12 @@ public static class DownloadEndpoints
             }
             finally
             {
-                ArrayPool<byte>.Shared.Return(buffer);
+                // clearArray, since Prompt 4. This buffer held DECRYPTED statement content - it did
+                // not before, when the same bytes came off a plain file and were no more sensitive
+                // in the pool than on the disk they came from. Returning it unwiped now hands the
+                // next renter a window onto somebody's bank statement, and the crypto streams
+                // already wipe theirs for exactly this reason.
+                ArrayPool<byte>.Shared.Return(buffer, clearArray: true);
             }
 
             _metrics.Completed(written);
