@@ -52,14 +52,16 @@ jobs:
 
       - run: dotnet build StatementDelivery.sln --configuration Release --no-restore
 
-      - name: Upload build output
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-output
-          path: |
-            **/bin/Release/net10.0/**
-          retention-days: 1
-          if-no-files-found: error
+      # NOTHING IS UPLOADED HERE, DELIBERATELY.
+      #
+      # This job used to publish every bin/Release/net10.0 directory as an artifact, and no job ever
+      # downloaded it - test, integration, docker and scan each restore and build for themselves.
+      # So it bought nothing, and it cost the account's artifact storage quota on every push. When
+      # that quota filled, the upload failed, this job went red, and `needs: build` skipped the
+      # entire rest of the pipeline - a green codebase reported as a broken one.
+      #
+      # `needs: build` is still what the downstream jobs want: a compile gate, so nothing spends a
+      # runner on a tree that does not build. That works without moving a single byte.
 
   # -------------------------------------------------------------------------------------------
   #  format - whitespace, using ordering and style, verified rather than applied.
@@ -133,8 +135,12 @@ jobs:
           --
           --coverage --coverage-output-format cobertura --coverage-output security.cobertura.xml
 
+      # Coverage is diagnostic output, not a gate. continue-on-error because a full artifact
+      # storage quota must never turn a job whose tests all passed into a red one - the report is
+      # worth having and it is not worth lying about the test results to get.
       - name: Upload coverage
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: coverage
