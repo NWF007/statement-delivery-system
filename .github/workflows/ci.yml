@@ -319,8 +319,20 @@ jobs:
       - name: Build images for scanning
         run: docker compose build delivery-api download-gateway generation-worker retention-worker db-migrator
 
-      - name: Trivy
-        uses: aquasecurity/trivy-action@0.28.0
+      # 0.35.0 IS A FLOOR, NOT A PREFERENCE. Everything below it is covered by
+      # GHSA-69fq-xp46-6x23: the Trivy ecosystem supply chain was briefly compromised. A scanner
+      # runs with the workflow token and the Docker socket mounted, so a compromised scanner is a
+      # worse outcome than the vulnerabilities it was installed to find.
+      #
+      # THE REMAINING IMAGES USED TO BE SCANNED BY `docker run aquasec/trivy:latest`, in a loop.
+      # A floating tag on a security scanner, in a repository whose stated rule is to pin every
+      # version - and it sat in the one file ToolchainPinningTests did not read. The advisory
+      # above is exactly the scenario that exposed us to: whatever `:latest` resolved to on the
+      # day would have run with the Docker socket. One pinned step per image is more verbose than
+      # the loop and removes the floating tag entirely, because the action carries its own Trivy.
+
+      - name: Trivy - delivery-api
+        uses: aquasecurity/trivy-action@0.35.0
         with:
           scan-type: image
           image-ref: statement-delivery-delivery-api
@@ -330,14 +342,46 @@ jobs:
           severity: CRITICAL,HIGH
           vuln-type: os,library
 
-      - name: Trivy - remaining images
-        run: |
-          set -e
-          for image in statement-delivery-download-gateway statement-delivery-generation-worker \
-                       statement-delivery-retention-worker statement-delivery-db-migrator; do
-            echo "::group::trivy $image"
-            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-              aquasec/trivy:latest image --exit-code 1 --ignore-unfixed \
-              --severity CRITICAL,HIGH --vuln-type os,library "$image"
-            echo "::endgroup::"
-          done
+      - name: Trivy - download-gateway
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          scan-type: image
+          image-ref: statement-delivery-download-gateway
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+          vuln-type: os,library
+
+      - name: Trivy - generation-worker
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          scan-type: image
+          image-ref: statement-delivery-generation-worker
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+          vuln-type: os,library
+
+      - name: Trivy - retention-worker
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          scan-type: image
+          image-ref: statement-delivery-retention-worker
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+          vuln-type: os,library
+
+      - name: Trivy - db-migrator
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          scan-type: image
+          image-ref: statement-delivery-db-migrator
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+          vuln-type: os,library

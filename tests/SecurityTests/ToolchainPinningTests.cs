@@ -96,6 +96,67 @@ public sealed partial class ToolchainPinningTests
     }
 
     [Fact]
+    public void Workflow_PinsEveryActionAndEveryImage()
+    {
+        // THE GAP THIS CLOSES, AND HOW IT WAS FOUND.
+        //
+        // ComposeFile_PinsEveryThirdPartyImageExactly enforced "no floating tags" against
+        // docker-compose.yml and nothing else. The CI workflow ran `docker run aquasec/trivy:latest`
+        // - a floating tag on a security scanner, mounted against the Docker socket - and no test
+        // read that file, so the rule was enforced in one place and silently absent in the other.
+        //
+        // It surfaced as GHSA-69fq-xp46-6x23 on the first push: the Trivy supply chain had been
+        // briefly compromised. A rule enforced in only one of the two files that need it is not
+        // really enforced; this reads the workflow.
+        string workflow = RepositoryFiles.Read(".github/workflows/ci.yml");
+
+        // Comments stripped first, so the note explaining what used to be here does not trip the
+        // rule it exists to describe.
+        string executable = string.Join(
+            '\n',
+            workflow.Split('\n').Where(static line => !line.TrimStart().StartsWith('#')));
+
+        // Matched on ":latest" ANYWHERE rather than by parsing `docker run` lines. The original
+        // offender wrapped its command, putting the image on a different line from `docker run` - so
+        // a rule keyed to that command would have read clean while the floating tag sat right there.
+        foreach (Match match in FloatingTag().Matches(executable))
+        {
+            string reference = match.Value;
+
+            RunnerLabels.ShouldContain(
+                reference,
+                $"{reference} floats on :latest; pin it, a security scanner most of all");
+        }
+
+        MatchCollection actions = WorkflowAction().Matches(workflow);
+        actions.Count.ShouldBeGreaterThan(0, "the workflow must use actions for this rule to mean anything");
+
+        foreach (Match match in actions)
+        {
+            string reference = match.Groups["ref"].Value;
+
+            // A branch reference re-resolves on every run, so a compromise upstream reaches this
+            // repository without a commit here. A tag or a SHA at least makes the change visible.
+            reference.ShouldNotBe("main");
+            reference.ShouldNotBe("master");
+            reference.ShouldNotBe("latest");
+        }
+
+        // The specific advisory, asserted by version rather than by absence: anything below 0.35.0
+        // is the compromised range, and a well-meaning downgrade would reintroduce it.
+        if (workflow.Contains("aquasecurity/trivy-action@", StringComparison.Ordinal))
+        {
+            foreach (Match match in TrivyAction().Matches(workflow))
+            {
+                Version.Parse(match.Groups["version"].Value)
+                    .ShouldBeGreaterThanOrEqualTo(
+                        new Version(0, 35, 0),
+                        "trivy-action below 0.35.0 is GHSA-69fq-xp46-6x23");
+            }
+        }
+    }
+
+    [Fact]
     public void CentralPackageManagement_IsEnabled_AndEveryVersionIsPinned()
     {
         string props = RepositoryFiles.Read("Directory.Packages.props");
@@ -128,4 +189,16 @@ public sealed partial class ToolchainPinningTests
 
     [GeneratedRegex(@"<PackageVersion\s+Include=""[^""]+""\s+Version=""(?<version>[^""]+)""", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 2000)]
     private static partial Regex PackageVersion();
+
+    /// <summary>Runner labels legitimately end in <c>-latest</c> and are not image references.</summary>
+    private static readonly string[] RunnerLabels = ["ubuntu-latest", "windows-latest", "macos-latest"];
+
+    [GeneratedRegex(@"[\w./-]+:latest|[\w-]+-latest", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 2000)]
+    private static partial Regex FloatingTag();
+
+    [GeneratedRegex(@"uses:\s*[\w.-]+/[\w.-]+@(?<ref>[\w.-]+)", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 2000)]
+    private static partial Regex WorkflowAction();
+
+    [GeneratedRegex(@"aquasecurity/trivy-action@v?(?<version>\d+\.\d+\.\d+)", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 2000)]
+    private static partial Regex TrivyAction();
 }
