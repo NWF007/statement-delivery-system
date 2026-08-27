@@ -81,6 +81,13 @@ public sealed class DownloadGatewayFactory : WebApplicationFactory<GatewayRateLi
 
                 ["ContentStore:RootPath"] = _contentRoot,
 
+                // Download.Gateway calls AddObjectStorage(), whose BucketName is [Required] and
+                // validated on start - so without this the host refuses to boot and every test in
+                // this file fails at construction rather than on its assertion. Prompt 3 uses the
+                // filesystem content store and never touches the bucket; Prompt 4 makes it real.
+                ["ObjectStorage:BucketName"] = "statements-test",
+                ["ObjectStorage:ServiceUrl"] = "http://localhost:9000",
+
                 ["Audit:ChainCount"] = "16",
                 ["Partitioning:MaintenanceEnabled"] = "false",
 

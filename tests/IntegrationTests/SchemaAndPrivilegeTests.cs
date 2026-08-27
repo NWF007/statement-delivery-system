@@ -25,7 +25,7 @@ public sealed class SchemaAndPrivilegeTests
         List<string> applied = [.. await connection.QueryAsync<string>(
             "SELECT scriptname FROM schemaversions ORDER BY scriptname;").ConfigureAwait(true)];
 
-        applied.Count.ShouldBe(9);
+        applied.Count.ShouldBe(12);
         applied.ShouldContain(name => name.Contains("V001__roles_and_grants", StringComparison.Ordinal));
         applied.ShouldContain(name => name.Contains("V002__distributed_lease", StringComparison.Ordinal));
         applied.ShouldContain(name => name.Contains("V003__partition_helper_functions", StringComparison.Ordinal));
@@ -35,14 +35,20 @@ public sealed class SchemaAndPrivilegeTests
         applied.ShouldContain(name => name.Contains("V007__audit_event", StringComparison.Ordinal));
         applied.ShouldContain(name => name.Contains("V008__legal_hold_and_customer_key", StringComparison.Ordinal));
         applied.ShouldContain(name => name.Contains("V009__grants", StringComparison.Ordinal));
+        applied.ShouldContain(name => name.Contains("V010__download_token", StringComparison.Ordinal));
+        applied.ShouldContain(name => name.Contains("V011__token_grants", StringComparison.Ordinal));
+        applied.ShouldContain(name => name.Contains("V012__audit_verify_grant", StringComparison.Ordinal));
     }
 
     [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]
     public async Task OnlyTheExpectedTables_Exist()
     {
-        // An allow-list, so a table nobody decided to add shows up as a failing test. In particular
-        // download_token must NOT be here: tokens are the next prompt's work, and a table that
-        // appears early is a table that gets used early.
+        // An allow-list, so a table nobody decided to add shows up as a failing test.
+        //
+        // download_token JOINED THIS LIST IN PROMPT 3, and the negative assertion that used to sit
+        // below it - "tokens are the next prompt's work" - came off at the same time. That pairing
+        // is the point of an allow-list: adding a table is a deliberate edit here, not a silent
+        // side effect of a migration nobody read.
         await using NpgsqlConnection connection = await _postgres.OpenAdminAsync(TestContext.Current.CancellationToken).ConfigureAwait(true);
 
         List<string> tables = [.. await connection.QueryAsync<string>(
@@ -64,14 +70,13 @@ public sealed class SchemaAndPrivilegeTests
                 "customer",
                 "customer_key",
                 "distributed_lease",
+                "download_token",
                 "legal_hold",
                 "outbox",
                 "schemaversions",
                 "statement",
             ],
             ignoreOrder: true);
-
-        tables.ShouldNotContain("download_token", "tokens are Prompt 3; a table that appears early gets used early.");
     }
 
     [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]

@@ -41,6 +41,12 @@ public static class PersistenceServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentException.ThrowIfNullOrWhiteSpace(serviceName);
 
+        // FIRST, before any repository is registered. Dapper cannot bind DateOnly on its own, and
+        // DateOnly is the RANGE partition key on `statement` - so without this every statement
+        // lookup and every token redemption throws before reaching the database. See
+        // Dapper/DateOnlyTypeHandlers.cs.
+        Dapper.DapperConfiguration.EnsureConfigured();
+
         builder.Services
             .AddOptions<PostgresOptions>()
             .Bind(builder.Configuration.GetSection(PostgresOptions.SectionName))
