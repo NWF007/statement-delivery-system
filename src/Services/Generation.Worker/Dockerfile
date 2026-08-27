@@ -11,6 +11,7 @@ WORKDIR /src
 # with their directory structure intact - a flattened copy loses the relative paths that the
 # ProjectReference elements resolve against, and restore fails.
 COPY Directory.Build.props Directory.Packages.props global.json ./
+COPY src/BuildingBlocks/Domain/Domain.csproj                   src/BuildingBlocks/Domain/
 COPY src/BuildingBlocks/Contracts/Contracts.csproj             src/BuildingBlocks/Contracts/
 COPY src/BuildingBlocks/Messaging/Messaging.csproj             src/BuildingBlocks/Messaging/
 COPY src/BuildingBlocks/Persistence/Persistence.csproj         src/BuildingBlocks/Persistence/
