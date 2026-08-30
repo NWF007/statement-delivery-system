@@ -71,6 +71,21 @@ Stop and wipe:
 docker compose down --volumes
 ```
 
+### Exercising the read/write split
+
+`postgres-replica` is behind a compose profile, so it does **not** start by default and
+`ConnectionIntent.ReadEventual` falls back to the primary — logged as a warning at startup rather
+than silently. To run the split for real:
+
+```bash
+docker compose --profile replica up -d postgres-replica
+```
+
+then set `POSTGRES_REPLICA_CONNECTION` for the services that should use it; `.env.example` has the
+connection string. Note that `ReadEventual` is for catalogue reads only: a read that gates an access
+decision must run inside the caller's transaction, which is ADR-0024 and is enforced by an
+architecture test.
+
 ### Running without Docker
 
 Every service **fails fast** if it is not fully configured — `ValidateDataAnnotations()` plus

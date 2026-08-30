@@ -121,6 +121,38 @@ public sealed class StatementReadRepository : IStatementReadRepository
     }
 
     /// <inheritdoc />
+    public async Task<Statement?> FindAsync(
+        StatementId id,
+        DateOnly periodStart,
+        CustomerId owner,
+        NpgsqlTransaction transaction,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(transaction);
+
+        // NO CONNECTION FACTORY CALL HERE, AND THAT IS THE ENTIRE POINT OF THIS OVERLOAD.
+        //
+        // Reaching for _connections would open a second connection while the caller holds a write
+        // transaction on the first - which is the pool-deadlock shape this overload exists to
+        // remove. The command runs on the transaction's own connection, so it sees the caller's
+        // uncommitted work, cannot be routed to a replica, and costs no extra pool slot.
+        NpgsqlConnection connection = transaction.Connection
+            ?? throw new InvalidOperationException("The statement lookup transaction has no connection.");
+
+        StatementRow? row = await connection.QuerySingleOrDefaultAsync<StatementRow>(new CommandDefinition(
+            FindSql,
+            new { id = id.Value, periodStart, owner = owner.Value },
+            transaction: transaction,
+
+            // The WRITE budget, not a read one: this command is part of a write transaction, and a
+            // read that outlives its transaction's budget holds the transaction open past it.
+            commandTimeout: _connections.CommandTimeoutSeconds(ConnectionIntent.Write),
+            cancellationToken: cancellationToken)).ConfigureAwait(false);
+
+        return row?.ToDomain();
+    }
+
+    /// <inheritdoc />
     public async Task<CursorPage<Statement>> ListForCustomerAsync(
         CustomerId customer,
         DateOnly fromInclusive,

@@ -130,6 +130,44 @@ public sealed class DownloadTokenRepository : IDownloadTokenRepository
     //  link would work twice. Declaring Write makes the requirement explicit and makes the routing
     //  wrong-by-construction rather than wrong-by-accident.
     // =========================================================================================
+    //  ---------------------------------------------------------------------------------------
+    //  WHY THERE IS NO `expires_at <= now() + INTERVAL '1 hour'` HERE, THOUGH RevokeSql HAS ONE.
+    //
+    //  It looks like an oversight and it is not. download_token is partitioned daily on
+    //  expires_at with seven days created ahead, so `expires_at > now()` prunes the past and
+    //  leaves roughly eight future partitions in the plan. An upper bound would cut that to two.
+    //  RevokeSql carries exactly that bound, so the asymmetry is real and it is deliberate.
+    //
+    //  THE BOUND WOULD BE UNSAFE HERE, because the two sides of it are measured by DIFFERENT
+    //  CLOCKS:
+    //
+    //    - ck_token_ttl guarantees expires_at <= issued_at + INTERVAL '1 hour'.
+    //    - issued_at is NOT the database's now(). InsertSql supplies it explicitly, from
+    //      TimeProvider.GetUtcNow() on the issuing API host. The DEFAULT now() on the column is
+    //      never reached.
+    //    - now() in this predicate is the DATABASE clock at redemption time.
+    //
+    //  So the bound holds only while app_clock <= db_clock. Let the API host run S ahead of the
+    //  database. A token issued at the cap - and DownloadLinkOptions.MaxTtlSeconds is 3600, so a
+    //  caller can ask for exactly that - gets expires_at = db_now + S + 1 hour, which is outside
+    //  `now() + INTERVAL '1 hour'` for any S > 0. The predicate would match nothing and a valid,
+    //  unexpired, unconsumed token would return the uniform 404.
+    //
+    //  That failure is worse than the scan it would save: it is intermittent, it depends on NTP
+    //  drift, it worsens with the requested TTL, and it presents as "the link didn't work" with a
+    //  denial reason of UNKNOWN_TOKEN - which is also what a guessing attack looks like.
+    //
+    //  RevokeSql is safe with the same bound only because revoking an already-expired token is a
+    //  no-op anyway: there, excluding a row costs nothing. Here it costs a customer their
+    //  statement.
+    //
+    //  TO MAKE IT SAFE, pick one and prove it, do not just add the line:
+    //    (a) stop supplying issued_at and let the column DEFAULT to now() - but expires_at is
+    //        still app-clock, so ck_token_ttl then rejects inserts when the app clock LAGS, which
+    //        trades a read bug for a write bug;
+    //    (b) widen the bound by an explicit, documented skew budget and alert when skew
+    //        approaches it.
+    //  ---------------------------------------------------------------------------------------
     private const string ConsumeSql = """
         UPDATE download_token
         SET    consumed_at         = now(),

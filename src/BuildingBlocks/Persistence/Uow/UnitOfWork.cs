@@ -16,6 +16,15 @@ namespace StatementDelivery.Persistence.Uow;
 /// the audit write fail silently has defeated the whole subsystem.
 /// </para>
 /// <para>
+/// ⚠ THIS PARAGRAPH WAS FALSE FROM PROMPT 2 UNTIL 2026-08-30, AND NOTHING CAUGHT IT.
+///
+/// A unit of work cannot make it true on its own: it opens a transaction and runs a delegate, and
+/// whether the audit append is inside that delegate is entirely up to the caller. Every caller put
+/// it outside. The rule now lives where it can be stated properly - ADR-0025 - and is carried by
+/// <c>RequestAudit.RecordAsync</c>'s transaction-accepting overload, which the three write paths
+/// use. If you are adding a fourth, use that overload, and call it LAST.
+/// </para>
+/// <para>
 /// THE COUNTER-RULE, BECAUSE IT BITES: THE AUDIT APPEND MUST BE THE LAST STATEMENT IN THE
 /// TRANSACTION. Appending takes <c>FOR UPDATE</c> on the chain head, and that row is a
 /// serialisation point for every other writer on the same chain. Hold it across a long operation

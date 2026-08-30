@@ -18,10 +18,9 @@ namespace ArchitectureTests;
 /// somebody who never read it. Written as a failing build, it gets reversed only on purpose.
 /// </para>
 /// <para>
-/// TODO(architecture): once a domain layer exists, add a test asserting that the domain project
-/// references NO framework assemblies at all - not ASP.NET Core, not Npgsql, not the AWS SDK. That
-/// rule cannot be written yet because there is no domain project to write it about, and a test
-/// that vacuously passes over an empty set is worse than no test.
+/// The domain-purity rules this file once carried a TODO about now live in
+/// <see cref="DomainPurityTests"/>, which asserts against the parsed project graph and the
+/// compiled IL rather than over a type set that could be empty.
 /// </para>
 /// </remarks>
 public sealed class LayeringTests

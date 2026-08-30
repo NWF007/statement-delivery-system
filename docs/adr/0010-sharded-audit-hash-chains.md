@@ -22,7 +22,10 @@ Given up: ordering across chains. A global timeline is a sixteen-way merge on `o
 
 Kept: within a chain, nothing is altered or deleted undetected - *given a trusted terminal hash*. But the heads live in the same database as the events: anyone able to rewrite both produces a self-consistent forgery, and tail truncation is invisible from inside. Closing that needs terminal hashes anchored outside PostgreSQL: append-only object storage under Object Lock, or a separately credentialed account. `IChainAnchor` ships as a no-op with `TODO(security)`; the real one is deferred. Residual: every writing role holds SELECT and UPDATE on `audit_chain_head`, which a `SECURITY DEFINER audit_append()` would remove.
 
+**Amended 2026-08-30.** This ADR describes how appends are *sharded*; it never said which transaction an append belongs to, and neither did any other ADR. Until 2026-08-30 every append ran in its own transaction, so a state change could commit with no record of it - the property this chain exists to provide, absent on every write path in the system. ADR-0025 states the binding rule and the code now follows it. The append being last in its transaction, for the head lock described above, is part of that rule.
+
 ## Revisit when
 - p99 head-lock wait exceeds 25 ms in a month-end burst, or one chain sustains >150 appends/sec.
 - `IChainAnchor` is still the no-op at the February 2027 external audit.
 - Any chain holds >12% of a month's events against an expected 6.25%.
+- A write path appends outside the transaction it describes. See ADR-0025; there is no behavioural test covering paths added after it.

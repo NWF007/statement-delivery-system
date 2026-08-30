@@ -126,8 +126,20 @@ public static class DownloadEndpoints
         string? userAgentHash = HashUserAgent(http.Request.Headers.UserAgent.ToString());
 
         // -----------------------------------------------------------------------------------------
-        // STEPS 4-7. Consume atomically, resolve the statement, audit, and COMMIT - all before a
-        // single byte is streamed.
+        // STEPS 4-7. Consume atomically, resolve the statement, AUDIT, and COMMIT - all before a
+        // single byte is streamed, and all in ONE TRANSACTION.
+        //
+        // ⚠ EVERY AUDIT EVENT THAT DESCRIBES THE OUTCOME OF THE CONSUME IS APPENDED IN HERE.
+        //
+        // That is the whole point, and it is what this block used to get wrong. The consume
+        // committed, and then DOWNLOAD_STARTED was written in a second transaction - so a crash or
+        // an audit failure in between left a token spent with no record that access had been
+        // granted. The comment above this block claimed otherwise for three prompts.
+        //
+        // What is deliberately NOT in here: the diagnosis of a consume that matched no row (no
+        // business write happened, so there is nothing to bind to), and everything that happens
+        // after the commit - the transfer outcome, and the two content failures. Those use the
+        // transactionless overload, correctly. See ADR-0025.
         // -----------------------------------------------------------------------------------------
         RedemptionOutcome outcome = await unitOfWork.ExecuteAsync(
             async (NpgsqlTransaction transaction, CancellationToken token2) =>
@@ -144,13 +156,68 @@ public static class DownloadEndpoints
                 // The token carries BOTH the statement and the owner, so this fetch re-enforces the
                 // binding: a token whose customer no longer owns the statement resolves to nothing.
                 // It is also a PRUNED point lookup, because the token carried the partition key.
+                //
+                // SECURITY: this read re-enforces the token -> statement -> customer binding and
+                // decides whether to serve. It MUST run on the consume's own connection, inside the
+                // consume's transaction:
+                //   - ReadEventual would route to a replica; under lag it returns null for a
+                //     statement that exists, the consume still commits, and the customer's
+                //     single-use token is burned for a 404.
+                //   - Stale crypto columns decrypt against the wrong material and raise
+                //     CiphertextIntegrityException - an integrity alert for replication lag.
+                //   - A second connection while holding a write transaction deadlocks the pool at
+                //     concurrency >= pool_size.
+                // See ADR-0024. DownloadGateway_MustNotCall_TransactionlessStatementRead enforces it.
                 Statement? statement = await statements
-                    .FindAsync(consumed.Value.StatementId, consumed.Value.StatementPeriod, consumed.Value.CustomerId, token2)
+                    .FindAsync(
+                        consumed.Value.StatementId,
+                        consumed.Value.StatementPeriod,
+                        consumed.Value.CustomerId,
+                        transaction,
+                        token2)
                     .ConfigureAwait(false);
 
-                return statement is null
-                    ? RedemptionOutcome.Denied(consumed)
-                    : RedemptionOutcome.Consumed(consumed.Value, statement);
+                if (statement is null)
+                {
+                    // The token was valid but the statement it names is gone. The consume DID write
+                    // - consumed_at is set on this transaction - so this denial is the outcome of a
+                    // state change and binds to it.
+                    _ = await audit.RecordAsync(
+                        http, AuditAction.AccessDenied, AuditOutcome.Denied,
+                        consumed.Value.CustomerId, consumed.Value.StatementId, transaction,
+                        DenialReason.NotFound,
+                        Detail(("token_hash", hash.ToString()), ("link_id", consumed.Value.Id.ToString())),
+                        token2).ConfigureAwait(false);
+
+                    return RedemptionOutcome.Denied(consumed);
+                }
+
+                // THE APPEND IS THE LAST STATEMENT IN THIS TRANSACTION, AND THAT IS A THROUGHPUT
+                // REQUIREMENT, NOT A STYLE ONE. It takes FOR UPDATE on the chain head, which
+                // serialises every other writer on the same chain; anything done after it runs
+                // while a sixteenth of the system's write capacity waits.
+                (string action, string outcomeCode, string? denial, string? statusDetail) = statement.Status switch
+                {
+                    StatementStatus.Purged =>
+                        (AuditAction.AccessDenied, AuditOutcome.Denied, DenialReason.NotFound, "PURGED"),
+                    StatementStatus.Archived =>
+                        (AuditAction.AccessDenied, AuditOutcome.Denied, DenialReason.NotFound, "ARCHIVED"),
+                    _ =>
+                        (AuditAction.DownloadStarted, AuditOutcome.Success, (string?)null, (string?)null),
+                };
+
+                _ = await audit.RecordAsync(
+                    http, action, outcomeCode,
+                    consumed.Value.CustomerId, consumed.Value.StatementId, transaction,
+                    denial,
+                    Detail(
+                        ("token_hash", hash.ToString()),
+                        ("link_id", consumed.Value.Id.ToString()),
+                        ("size_bytes", statement.Storage?.SizeBytes),
+                        ("status", statusDetail)),
+                    token2).ConfigureAwait(false);
+
+                return RedemptionOutcome.Consumed(consumed.Value, statement);
             },
             cancellationToken).ConfigureAwait(false);
 
@@ -159,16 +226,23 @@ public static class DownloadEndpoints
         // -----------------------------------------------------------------------------------------
         if (outcome.Statement is null)
         {
-            string reason = outcome.Consumption is null
-                ? await tokens.DiagnoseFailureAsync(hash, cancellationToken).ConfigureAwait(false)
+            if (outcome.Consumption is null)
+            {
+                // Nothing matched, so nothing was written. Diagnose out of band and audit in its own
+                // transaction - there is no business write to bind to.
+                string reason = await tokens
+                    .DiagnoseFailureAsync(hash, cancellationToken).ConfigureAwait(false);
 
-                // The token was valid but the statement it names is gone. Treated as a denial rather
-                // than an error: from the caller's side it is simply unavailable.
-                : DenialReason.NotFound;
+                return await DenyAsync(
+                    http, audit, metrics, reason, settings, time, startedAt, cancellationToken)
+                    .ConfigureAwait(false);
+            }
 
-            return await DenyAsync(
-                http, audit, metrics, reason, settings, time, startedAt, cancellationToken,
-                outcome.Consumption?.CustomerId, outcome.Consumption?.StatementId).ConfigureAwait(false);
+            // ALREADY AUDITED, INSIDE THE TRANSACTION THAT CONSUMED THE TOKEN. Auditing again here
+            // would write the same denial twice and put a second row on the chain for one event.
+            return await PadAndDenyAsync(
+                metrics, DenialReason.NotFound, settings, time, startedAt, cancellationToken)
+                .ConfigureAwait(false);
         }
 
         TokenConsumption consumption = outcome.Consumption!.Value;
@@ -186,12 +260,7 @@ public static class DownloadEndpoints
         // -----------------------------------------------------------------------------------------
         if (resolved.Status == StatementStatus.Purged)
         {
-            await audit.RecordAsync(
-                http, AuditAction.AccessDenied, AuditOutcome.Denied,
-                consumption.CustomerId, consumption.StatementId, DenialReason.NotFound,
-                Detail(("token_hash", hash.ToString()), ("status", "PURGED")),
-                cancellationToken).ConfigureAwait(false);
-
+            // Audited inside the consume transaction, with status=PURGED in the detail bag.
             return Results.Problem(
                 title: "Statement no longer available",
                 detail: "This statement has passed its retention period and has been destroyed.",
@@ -200,12 +269,7 @@ public static class DownloadEndpoints
 
         if (resolved.Status == StatementStatus.Archived)
         {
-            await audit.RecordAsync(
-                http, AuditAction.AccessDenied, AuditOutcome.Denied,
-                consumption.CustomerId, consumption.StatementId, DenialReason.NotFound,
-                Detail(("token_hash", hash.ToString()), ("status", "ARCHIVED")),
-                cancellationToken).ConfigureAwait(false);
-
+            // Audited inside the consume transaction, with status=ARCHIVED in the detail bag.
             return Results.Problem(
                 title: "Statement is archived",
                 detail: "This statement is in cold storage and must be restored before it can be downloaded.",
@@ -213,7 +277,8 @@ public static class DownloadEndpoints
         }
 
         // -----------------------------------------------------------------------------------------
-        // STEP 7. DOWNLOAD_STARTED is audited and the transaction is COMMITTED before streaming.
+        // STEP 7. DOWNLOAD_STARTED was audited INSIDE the consume transaction, which has now
+        // COMMITTED. Everything below this line happens after the commit.
         //
         // ⚠ IF THE CLIENT DISCONNECTS AT 40%, THE TOKEN STAYS CONSUMED. That is correct, and the
         // alternative is a hole. Consumption records ATTEMPTED ACCESS, and attempted access is what
@@ -221,18 +286,23 @@ public static class DownloadEndpoints
         // attacker could replay it indefinitely simply by aborting the connection every time - and
         // each abort would leave no evidence that access had been granted at all. See ADR-0017.
         // -----------------------------------------------------------------------------------------
-        await audit.RecordAsync(
-            http, AuditAction.DownloadStarted, AuditOutcome.Success,
-            consumption.CustomerId, consumption.StatementId,
-            detail: Detail(
-                ("token_hash", hash.ToString()),
-                ("link_id", consumption.Id.ToString()),
-                ("size_bytes", resolved.Storage?.SizeBytes)),
-            cancellationToken: cancellationToken).ConfigureAwait(false);
-
         if (resolved.Storage is null)
         {
-            metrics.Denied(DenialReason.NotFound);
+            // AVAILABLE, AND NOWHERE TO READ IT FROM. Should be unreachable - the write path sets
+            // the storage key in the same statement that sets the status - so reaching it means the
+            // row and the object store disagree. That is reconciliation CHECK 1 territory, and it
+            // gets its own metric so the signal exists before the job that formalises it.
+            //
+            // Audited transactionlessly and correctly: the consume has committed, and there is no
+            // business write left to bind this to.
+            metrics.ContentMissing(DenialReason.StorageUnavailable);
+
+            await audit.RecordAsync(
+                http, AuditAction.DownloadFailed, AuditOutcome.Error,
+                consumption.CustomerId, consumption.StatementId, DenialReason.StorageUnavailable,
+                Detail(("token_hash", hash.ToString()), ("link_id", consumption.Id.ToString())),
+                cancellationToken).ConfigureAwait(false);
+
             return Deny();
         }
 
@@ -277,7 +347,19 @@ public static class DownloadEndpoints
 
         if (statementContent is null)
         {
-            metrics.Denied(DenialReason.NotFound);
+            // The row points at an object that is not there. Same class of problem as the branch
+            // above, different half: the location survived and the bytes did not.
+            metrics.ContentMissing(DenialReason.ContentUnavailable);
+
+            await audit.RecordAsync(
+                http, AuditAction.DownloadFailed, AuditOutcome.Error,
+                consumption.CustomerId, consumption.StatementId, DenialReason.ContentUnavailable,
+                Detail(
+                    ("token_hash", hash.ToString()),
+                    ("link_id", consumption.Id.ToString()),
+                    ("storage_key", resolved.Storage.Key)),
+                cancellationToken).ConfigureAwait(false);
+
             return Deny();
         }
 
@@ -303,6 +385,14 @@ public static class DownloadEndpoints
         statusCode: StatusCodes.Status404NotFound,
         contentType: "application/problem+json");
 
+    /// <summary>
+    /// Audits a TOKEN-VALIDATION failure in its own transaction, pads, and denies.
+    /// </summary>
+    /// <remarks>
+    /// Only for denials where the consume matched no row, so no business write happened and there
+    /// is nothing to bind the record to. A denial reached AFTER the consume wrote is audited inside
+    /// the consume's transaction and comes back through <see cref="PadAndDenyAsync"/> instead.
+    /// </remarks>
     private static async Task<IResult> DenyAsync(
         HttpContext http,
         RequestAudit audit,
@@ -311,18 +401,39 @@ public static class DownloadEndpoints
         DownloadOptions settings,
         TimeProvider time,
         long startedAt,
-        CancellationToken cancellationToken,
-        StatementDelivery.Domain.Identifiers.CustomerId? customerId = null,
-        StatementDelivery.Domain.Identifiers.StatementId? statementId = null)
+        CancellationToken cancellationToken)
     {
-        metrics.Denied(reason);
-
         // AUDIT RICHLY, RESPOND OPAQUELY. The reason is recorded here and never returned.
+        //
+        // No customer or statement is passed, and there is none to pass: the consume matched
+        // nothing, so the token told us nothing we are entitled to attribute this to.
         await audit.RecordAsync(
             http, AuditAction.AccessDenied, AuditOutcome.Denied,
-            customerId, statementId, reason,
+            null, null, reason,
             Detail(("outcome", "denied")),
             cancellationToken).ConfigureAwait(false);
+
+        return await PadAndDenyAsync(metrics, reason, settings, time, startedAt, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Counts, pads and denies. THE RECORD HAS ALREADY BEEN WRITTEN by the caller's transaction.
+    /// </summary>
+    /// <remarks>
+    /// Split out so that a denial audited inside the consume transaction still returns through the
+    /// same padding and the same body. Two response builders would be two places for the uniform
+    /// denial to stop being uniform.
+    /// </remarks>
+    private static async Task<IResult> PadAndDenyAsync(
+        DownloadMetrics metrics,
+        string reason,
+        DownloadOptions settings,
+        TimeProvider time,
+        long startedAt,
+        CancellationToken cancellationToken)
+    {
+        metrics.Denied(reason);
 
         // Pad to the configured floor so the cheap failures do not finish visibly faster than the
         // expensive ones. See DownloadOptions for an honest account of what this does and does not
@@ -332,7 +443,16 @@ public static class DownloadEndpoints
 
         if (elapsed < floor)
         {
-            await Task.Delay(floor - elapsed, time, cancellationToken).ConfigureAwait(false);
+            // NOT the request token, deliberately. The pad exists to make failures look alike to an
+            // observer. A client that has disconnected is not observing, and cancelling the pad only
+            // converts a clean denial into an OperationCanceledException on the way out - which the
+            // global handler then has to treat as an error it is not.
+            //
+            // cancellationToken stays in the signature: it documents that the caller's token was
+            // considered here and deliberately not used, which is worth more than an argument list
+            // that silently never had one.
+            _ = cancellationToken;
+            await Task.Delay(floor - elapsed, time, CancellationToken.None).ConfigureAwait(false);
         }
 
         return Deny();

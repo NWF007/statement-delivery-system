@@ -59,7 +59,7 @@ var bulk = host.Services.GetRequiredService<IBulkWriter>();
 var random = new Random(options.Seed);
 
 // Computed once. See SeedKekBytes for what it is and is not.
-var SeedKek = new Lazy<byte[]>(SeedKekBytes);
+var seedKek = new Lazy<byte[]>(SeedKekBytes);
 DateOnly today = DateOnly.FromDateTime(DateTime.UtcNow);
 StatementPeriod newest = StatementPeriod.ForMonth(today.Year, today.Month).Previous();
 
@@ -235,7 +235,7 @@ StatementRow BuildStatement(Guid statementId, AccountRow account, StatementPerio
     // key cannot satisfy. Generating a real one is both simpler and more faithful than inventing
     // padding that would satisfy the constraint while misrepresenting the row.
     byte[] wrappedDek = StatementDelivery.Crypto.Keys.KeyWrap.Wrap(
-        SeedKek.Value,
+        seedKek.Value,
         System.Security.Cryptography.RandomNumberGenerator.GetBytes(32),
         kekId);
 

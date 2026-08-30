@@ -118,18 +118,93 @@ public sealed class PostgresFixture : IAsyncLifetime
         await _container.StartAsync().ConfigureAwait(false);
         AdminConnectionString = _container.GetConnectionString();
 
-        // TWO PASSES, MIRRORING Db.Migrator/Program.cs. Scripts named *.notx.sql run outside a
-        // transaction, because CREATE INDEX CONCURRENTLY cannot run inside one.
-        //
-        // This fixture MUST match the real runner. A test database built by a different procedure
-        // from the production one is a test database that proves nothing about production - and this
-        // particular divergence would not be subtle: running V014 inside a transaction fails
-        // outright, so every integration test would go red at once with an error about CONCURRENTLY
-        // that points nowhere near the fixture.
+        Migrate(AdminConnectionString);
+
+        // A migrated but unanalysed database gives the planner no row estimates, and the partition
+        // pruning assertions would be measuring the planner's ignorance rather than the schema.
+        await using NpgsqlConnection connection = await OpenAdminAsync(CancellationToken.None).ConfigureAwait(false);
+        await using NpgsqlCommand analyze = connection.CreateCommand();
+        analyze.CommandText = "ANALYZE;";
+        _ = await analyze.ExecuteNonQueryAsync().ConfigureAwait(false);
+
+        Started = true;
+    }
+
+    /// <summary>
+    /// Builds a second, SEPARATELY MIGRATED database that stands in for a lagging read replica.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A real streaming replica cannot be paused mid-test, so lag is simulated the only way that is
+    /// both deterministic and honest: a database with the IDENTICAL SCHEMA and none of the rows.
+    /// Every read routed to it returns nothing, which is exactly what a replica arbitrarily far
+    /// behind the primary returns, and it is the worst case the routing has to survive.
+    /// </para>
+    /// <para>
+    /// Migrated through <see cref="Migrate"/>, the same routine the primary uses, so the stand-in
+    /// cannot drift into a shape the production migrator would never produce.
+    /// </para>
+    /// </remarks>
+    /// <param name="databaseName">Name for the new database. Must be a plain identifier.</param>
+    /// <param name="role">The application role the caller will connect as.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A connection string for <paramref name="role"/> against the lagging database.</returns>
+    public async Task<string> CreateLaggingReplicaAsync(
+        string databaseName,
+        string role,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(databaseName);
+
+        if (!databaseName.All(static c => char.IsAsciiLetterOrDigit(c) || c == '_'))
+        {
+            throw new ArgumentException("Database name must be a plain identifier.", nameof(databaseName));
+        }
+
+        await using (NpgsqlConnection admin = await OpenAdminAsync(cancellationToken).ConfigureAwait(false))
+        {
+            await using NpgsqlCommand create = admin.CreateCommand();
+
+            // CREATE DATABASE cannot be parameterised, hence the identifier check above.
+            create.CommandText = $"CREATE DATABASE {databaseName};";
+            _ = await create.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        var adminToReplica = new NpgsqlConnectionStringBuilder(AdminConnectionString)
+        {
+            Database = databaseName,
+        };
+
+        Migrate(adminToReplica.ConnectionString);
+
+        return new NpgsqlConnectionStringBuilder(adminToReplica.ConnectionString)
+        {
+            Username = role,
+            Password = RolePassword,
+        }.ConnectionString;
+    }
+
+    /// <summary>
+    /// Applies every migration to one database, in two passes.
+    /// </summary>
+    /// <remarks>
+    /// TWO PASSES, MIRRORING Db.Migrator/Program.cs. Scripts named <c>*.notx.sql</c> run outside a
+    /// transaction, because <c>CREATE INDEX CONCURRENTLY</c> cannot run inside one.
+    /// <para>
+    /// This fixture MUST match the real runner. A test database built by a different procedure from
+    /// the production one is a test database that proves nothing about production - and this
+    /// particular divergence would not be subtle: running V014 inside a transaction fails outright,
+    /// so every integration test would go red at once with an error about CONCURRENTLY that points
+    /// nowhere near the fixture.
+    /// </para>
+    /// </remarks>
+    /// <param name="connectionString">An administrative connection string for the target database.</param>
+    private static void Migrate(string connectionString)
+    {
         foreach (bool nonTransactional in (bool[])[false, true])
         {
             UpgradeEngineBuilder engine = DeployChanges.To
-                .PostgresqlDatabase(AdminConnectionString)
+                .PostgresqlDatabase(connectionString)
                 .WithScriptsEmbeddedInAssembly(
                     typeof(MigrationOptions).Assembly,
                     name => name.EndsWith(".sql", StringComparison.OrdinalIgnoreCase)
@@ -157,15 +232,6 @@ public sealed class PostgresFixture : IAsyncLifetime
                     result.Error);
             }
         }
-
-        // A migrated but unanalysed database gives the planner no row estimates, and the partition
-        // pruning assertions would be measuring the planner's ignorance rather than the schema.
-        await using NpgsqlConnection connection = await OpenAdminAsync(CancellationToken.None).ConfigureAwait(false);
-        await using NpgsqlCommand analyze = connection.CreateCommand();
-        analyze.CommandText = "ANALYZE;";
-        _ = await analyze.ExecuteNonQueryAsync().ConfigureAwait(false);
-
-        Started = true;
     }
 
     /// <inheritdoc />
