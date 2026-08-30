@@ -116,7 +116,8 @@ public sealed class RequestAudit
     /// This deliberately changes a failure mode. Before, an audit failure on the redemption path
     /// left the token consumed, nothing recorded, and a 500 returned - the customer lost their link
     /// and the trail showed nothing. Now the consume rolls back, so the token survives and the link
-    /// works once auditing recovers. That is the behaviour ADR-0007 already specified.
+    /// works once auditing recovers. That is the behaviour ADR-0017 specified for the
+    /// redemption path and ADR-0025 now states for every write path.
     /// </para>
     /// </remarks>
     /// <param name="context">The HTTP request being audited.</param>

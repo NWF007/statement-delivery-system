@@ -40,9 +40,9 @@ An audit failure now **rolls back the business operation**. On the redemption pa
 
 This is strictly better than the behaviour it replaces, which burned the token, recorded nothing, and returned 500.
 
-**A correction worth recording.** The remediation brief for this change described the fix as "the code catching up with ADR-0007 (fail closed when audit is unavailable)." That is not so, on two counts. ADR-0007 is the partitioning strategy and says nothing about auditing. And no ADR in this repository stated the fail-closed rule at all — it existed only as a comment at the top of `NpgsqlUnitOfWork`, asserting a property the code did not have.
+**A correction worth recording.** The remediation brief for this change described the fix as "the code catching up with ADR-0007 (fail closed when audit is unavailable)." ADR-0007 is the partitioning strategy and says nothing about auditing — the reference was wrong. The rule *was* written down once, for one path: ADR-0017 (consume-before-stream) states that the `DOWNLOAD_STARTED` record is written "in the same transaction as the consume" and that "a failure to record the grant fails the redemption." The shipped code contradicted that accepted ADR for a full prompt, on that path and every other, while comments in `NpgsqlUnitOfWork` and both endpoints repeated the claim.
 
-So this ADR is not a restatement. **It is the first written record of a rule that had, until now, only ever been claimed.** That is worth being exact about, because "the code was wrong" and "the decision was never written down" call for different follow-ups, and only the second explains how three call sites contradicted the same comment for three prompts without anyone noticing.
+So this ADR generalises ADR-0017's per-path decision into the system-wide rule, and is the first place the *general* rule is written down. That is worth being exact about, because the failure here was both kinds at once: on the redemption path the code was wrong against a documented decision and nothing checked them against each other; everywhere else the rule had never been written anywhere a reviewer would look.
 
 ## Alternatives considered
 

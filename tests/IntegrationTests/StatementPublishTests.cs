@@ -18,7 +18,7 @@ namespace IntegrationTests;
 /// <para>
 /// Three constraints govern an AVAILABLE row - <c>ck_statement_available_has_storage</c> (V006),
 /// <c>ck_statement_available_has_key_material</c> (V013) and
-/// <c>ck_statement_content_sha256_required</c> (V015). Between Prompt 4 and this change there was
+/// <c>ck_statement_available_has_digest</c> (V015). Between Prompt 4 and this change there was
 /// no method in the repository that could satisfy all three, and the one method that set
 /// <c>status</c> could satisfy none of them.
 /// </para>

@@ -108,12 +108,12 @@ public sealed class StatementWriteRepository : IStatementWriteRepository
         CryptoEnvelope envelope = location.Envelope
             ?? throw new ArgumentException(
                 "An AVAILABLE statement requires a crypto envelope: ck_statement_available_has_key_material "
-                + "(V013) and ck_statement_content_sha256_required (V015) both reject a row without one.",
+                + "(V013) and ck_statement_available_has_digest (V015) both reject a row without one.",
                 nameof(location));
 
         byte[] contentSha256 = envelope.ContentSha256
             ?? throw new ArgumentException(
-                "The envelope carries no content digest, which ck_statement_content_sha256_required (V015) "
+                "The envelope carries no content digest, which ck_statement_available_has_digest (V015) "
                 + "requires on every AVAILABLE row - it is what lets a reader detect a substituted object.",
                 nameof(location));
 

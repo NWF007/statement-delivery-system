@@ -7,12 +7,12 @@ ADRs: an ADR records a decision, this records a gap.
 
 **As of 2026-08-30, on commit `41048ce` plus the Prompts 1–4 audit remediation.**
 
-The suite is 451 tests, 0 failed. **105 of them have never run on the development host**, because they
+The suite is 457 tests, 0 failed. **109 of them have never run on the development host**, because they
 need a container runtime that host cannot provide:
 
 | Gate | Count | Why |
 |---|---|---|
-| `DockerAvailability.SkipReason` | 101 | Docker Desktop is installed but its Linux engine cannot start: WSL is not installed and the Hyper-V `vmcompute` service does not exist. This is a nested-virtualisation guest, so enabling either is not a quick fix. `docker info` returns HTTP 500. |
+| `DockerAvailability.SkipReason` | 105 | Docker Desktop is installed but its Linux engine cannot start: WSL is not installed and the Hyper-V `vmcompute` service does not exist. This is a nested-virtualisation guest, so enabling either is not a quick fix. `docker info` returns HTTP 500. |
 | `AwsKmsAvailability.SkipReason` | 4 | Need real AWS KMS credentials. |
 
 Both gates are `[Fact(SkipUnless = ...)]` with a stated reason, so they report as skipped rather than

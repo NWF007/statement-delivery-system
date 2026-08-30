@@ -155,7 +155,7 @@ public interface IStatementWriteRepository
     /// Three constraints make an AVAILABLE row inseparable from its content:
     /// <c>ck_statement_available_has_storage</c> (V006) wants a storage key,
     /// <c>ck_statement_available_has_key_material</c> (V013) wants a wrapped DEK and a KEK id, and
-    /// <c>ck_statement_content_sha256_required</c> (V015) wants a digest. A method that set only
+    /// <c>ck_statement_available_has_digest</c> (V015) wants a digest. A method that set only
     /// <c>status</c> could satisfy none of them, so every call would have failed with SQLSTATE
     /// 23514 - and a check-constraint violation surfacing during statement generation reads as a
     /// crypto defect, which is a day spent in the wrong subsystem.
