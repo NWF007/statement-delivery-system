@@ -125,7 +125,6 @@ public sealed class DeliveryApiFactory : WebApplicationFactory<Delivery.Api.Conf
                 // distributed cache rather than failing.
                 ["Cache:ConnectionString"] = string.Empty,
 
-                ["ContentStore:RootPath"] = Path.GetTempPath(),
                 ["DownloadLinks:GatewayBaseUrl"] = "http://gateway.test",
 
                 // No OTLP endpoint, so no exporter is registered and the test does not spend its

@@ -70,10 +70,16 @@ public sealed partial class StatementQueryIntegrationTests
             """
             INSERT INTO statement (
                 id, account_id, customer_id, period_start, period_end, version, status,
-                storage_key, size_bytes, retain_until, generated_at)
+                storage_key, size_bytes, content_sha256,
+                wrapped_dek, dek_algorithm, kek_id, retain_until, generated_at)
             VALUES (
                 @id, @account, @customer, @start, @end, @version, 'AVAILABLE',
-                @key, 42000, @retain, now());
+                @key, 42000,
+
+                -- An AVAILABLE row must now be both READABLE (V013: key material) and VERIFIABLE
+                -- (V015: a 32-byte digest). This seeder predates both and would fail at the INSERT.
+                decode(repeat('ab', 32), 'hex'),
+                decode(repeat('cd', 61), 'hex'), 'AES-256-GCM', 'kek-test', @retain, now());
             """,
             new
             {
@@ -257,60 +263,23 @@ public sealed partial class StatementQueryIntegrationTests
         insert.SqlState.ShouldBe("42501");
     }
 
-    [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]
-    public async Task UnitOfWork_AuditFailure_RollsBackBusinessOperation()
-    {
-        // THE RULE: AN OPERATION WITH NO AUDIT RECORD MUST BE IMPOSSIBLE.
-        //
-        // The audit append is forced to fail - here by a field carrying the canonical-form delimiter,
-        // which Canonicalise rejects rather than escapes - and the statement insert that shared the
-        // transaction must vanish with it. If it survived, an attacker who could break audit writes
-        // could operate unobserved.
-        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
-        (CustomerId customer, AccountId account) = await SeedCustomerAsync(cancellationToken).ConfigureAwait(true);
-
-        NpgsqlConnectionFactory factory = _postgres.ConnectionFactoryFor("app_generation");
-        await using (factory.ConfigureAwait(false))
-        {
-            var unitOfWork = new NpgsqlUnitOfWork(factory);
-            var writeRepository = new StatementWriteRepository(factory);
-            var auditWriter = new PostgresAuditWriter(Options.Create(new AuditOptions()), factory);
-
-            DateOnly today = DateOnly.FromDateTime(DateTime.UtcNow);
-            StatementPeriod period = StatementPeriod.ForMonth(today.Year, today.Month);
-
-            Statement statement = Statement.Create(
-                new StatementId(Guid.CreateVersion7()), account, customer, period, RetentionPolicy.Default, version: 99);
-
-            await Should.ThrowAsync<Exception>(() => unitOfWork.ExecuteAsync(
-                async (transaction, token) =>
-                {
-                    await writeRepository.InsertAsync(statement, transaction, token).ConfigureAwait(false);
-
-                    var poisoned = new AuditEntry(
-                        new AuditEventId(Guid.CreateVersion7()),
-                        statement.Id,
-                        customer,
-                        ActorType.System,
-                        "actor" + AuditHashing.FieldDelimiter + "forged",
-                        AuditAction.StatementGenerated,
-                        AuditOutcome.Success,
-                        null,
-                        null,
-                        null,
-                        new Dictionary<string, object?>(StringComparer.Ordinal),
-                        DateTimeOffset.UtcNow);
-
-                    _ = await auditWriter.AppendAsync(poisoned, transaction, token).ConfigureAwait(false);
-                },
-                cancellationToken)).ConfigureAwait(true);
-
-            var readRepository = new StatementReadRepository(_postgres.ConnectionFactoryFor("app_delivery"));
-
-            (await readRepository.FindAsync(statement.Id, period.Start, customer, cancellationToken).ConfigureAwait(true))
-                .ShouldBeNull("the business write must have rolled back with the failed audit append");
-        }
-    }
+    // =============================================================================================
+    //  UnitOfWork_AuditFailure_RollsBackBusinessOperation LIVED HERE AND WAS VACUOUS.
+    //
+    //  It opened its own transaction and called IAuditWriter.AppendAsync directly - a shape no
+    //  production code used, because every write path committed its business change in one
+    //  transaction and appended the audit record in another. So it proved that NpgsqlUnitOfWork
+    //  rolls back when a delegate throws, which is trivially true, and it did NOT prove the rule
+    //  stated in its own first line: AN OPERATION WITH NO AUDIT RECORD MUST BE IMPOSSIBLE.
+    //
+    //  It passed for three prompts while that rule was false of every shipped endpoint.
+    //
+    //  REPLACED BY RedemptionInvariantTests.Redemption_WhenAuditWriteFails_DoesNotConsumeToken,
+    //  which drives the real HTTP redemption path with a deliberately broken audit writer and
+    //  asserts the token survives. That test fails against the code as it was shipped; this one
+    //  could not. Deleted rather than kept alongside it, because a test that cannot fail for the
+    //  reason it names is worse than no test - it answers the question and answers it wrongly.
+    // =============================================================================================
 
     private static async Task<string> ExplainAsync(
         NpgsqlConnection connection,

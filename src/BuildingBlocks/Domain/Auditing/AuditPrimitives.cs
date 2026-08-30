@@ -99,6 +99,19 @@ public static class AuditAction
 
     /// <summary>The transfer ended before all bytes were sent - usually a client disconnect.</summary>
     public const string DownloadIncomplete = "DOWNLOAD_INCOMPLETE";
+
+    /// <summary>
+    /// The token was valid and the download was authorised, but the bytes could not be served.
+    /// </summary>
+    /// <remarks>
+    /// DISTINCT FROM <see cref="DownloadIncomplete"/>, and the distinction is the point. Incomplete
+    /// means the client went away, which is ordinary. This means WE could not produce the content
+    /// for a statement we had already told the customer was AVAILABLE - a missing object, or an
+    /// envelope that will not open. That is a data-integrity problem on our side, and without its
+    /// own action it would be invisible: the trail would show a download that started and then
+    /// simply stopped being mentioned.
+    /// </remarks>
+    public const string DownloadFailed = "DOWNLOAD_FAILED";
 }
 
 /// <summary>
@@ -149,6 +162,39 @@ public static class DenialReason
 
     /// <summary>The presented value was not a well-formed token at all.</summary>
     public const string MalformedToken = "MALFORMED_TOKEN";
+
+    /// <summary>
+    /// The token was valid and the object could not be decrypted. NOT A USER ERROR.
+    /// </summary>
+    /// <remarks>
+    /// Every other reason on this list describes something a caller did. This one describes
+    /// something that happened to the DATA: a corrupt object, a truncated one, an object substituted
+    /// for another, or a statement row rewritten to point somewhere it should not. The customer sees
+    /// the same 404 as everyone else, and an operator should be woken up. See
+    /// <c>statement_decryption_failure_total</c>, which is alerted on any non-zero value.
+    /// </remarks>
+    public const string DecryptionFailed = "DECRYPTION_FAILED";
+
+    /// <summary>
+    /// The statement row is AVAILABLE but carries no storage location.
+    /// </summary>
+    /// <remarks>
+    /// Should be unreachable: V013 and V015 require key material and a digest on an AVAILABLE row,
+    /// and the write path sets the storage key in the same statement. If it happens, the row and
+    /// the object store disagree - reconciliation CHECK 1 in Prompt 6. Counted by
+    /// <c>statement_content_missing_total</c>, which is alerted on any non-zero value.
+    /// </remarks>
+    public const string StorageUnavailable = "STORAGE_UNAVAILABLE";
+
+    /// <summary>
+    /// The storage location exists but the object behind it does not.
+    /// </summary>
+    /// <remarks>
+    /// The other half of <see cref="StorageUnavailable"/>: the row is intact and points somewhere,
+    /// and that somewhere is empty. An object deleted out from under a live statement, a lifecycle
+    /// rule that transitioned it, or a bucket that is not the one the row was written against.
+    /// </remarks>
+    public const string ContentUnavailable = "CONTENT_UNAVAILABLE";
 }
 
 /// <summary>

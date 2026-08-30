@@ -37,6 +37,9 @@ public sealed record AccountRow(
 /// <param name="SizeBytes">Stored size.</param>
 /// <param name="RetainUntil">Retention deadline, derived from the period end.</param>
 /// <param name="GeneratedAt">When the bytes were produced.</param>
+/// <param name="WrappedDek">The wrapped data key. Structurally real; see StatementRowMapper.</param>
+/// <param name="KekId">The cohort KEK alias for this customer.</param>
+/// <param name="ContentSha256">Digest of the plaintext. Required for AVAILABLE rows since V015.</param>
 public sealed record StatementRow(
     Guid Id,
     Guid AccountId,
@@ -48,7 +51,10 @@ public sealed record StatementRow(
     string StorageKey,
     long SizeBytes,
     DateOnly RetainUntil,
-    DateTimeOffset GeneratedAt);
+    DateTimeOffset GeneratedAt,
+    byte[] WrappedDek,
+    string KekId,
+    byte[] ContentSha256);
 
 /// <summary>Binary COPY mapping for <see cref="CustomerRow"/>.</summary>
 public sealed class CustomerRowMapper : IBulkRowMapper<CustomerRow>
@@ -94,9 +100,24 @@ public sealed class AccountRowMapper : IBulkRowMapper<AccountRow>
 /// Binary COPY mapping for <see cref="StatementRow"/>.
 /// </summary>
 /// <remarks>
-/// The crypto columns are deliberately absent: they are nullable, they stay NULL until the
-/// encryption work lands, and a seed tool that populated them would produce rows claiming an
-/// envelope structure that nothing can decrypt.
+/// <para>
+/// PROMPT 4 MADE THE CRYPTO COLUMNS MANDATORY FOR AN AVAILABLE STATEMENT. V013 adds
+/// <c>ck_statement_available_has_key_material</c>, so a seeded AVAILABLE row without a wrapped DEK
+/// and a KEK id is now rejected by the database - which is the constraint working, not the seed
+/// tool being awkward.
+/// </para>
+/// <para>
+/// So the tool writes a REAL wrapped key: a fresh 32-byte DEK, wrapped by a real cohort KEK derived
+/// from a seed-tool-only secret, in the real envelope format. Sixty-one bytes per row, which at 2.5
+/// billion rows is about 150 GB - a number worth having in the volume data rather than discovering
+/// during a capacity review.
+/// </para>
+/// <para>
+/// THESE ROWS ARE NOT DECRYPTABLE, and neither were they before: the objects they name have never
+/// existed. This is not "pretending to encrypt" - nothing here claims a readable statement - it is
+/// generating a row of the right SHAPE, which is the entire purpose of a volume seeder. The bytes
+/// are as fictional as the storage key that points at them.
+/// </para>
 /// </remarks>
 public sealed class StatementRowMapper : IBulkRowMapper<StatementRow>
 {
@@ -105,6 +126,7 @@ public sealed class StatementRowMapper : IBulkRowMapper<StatementRow>
     [
         "id", "account_id", "customer_id", "period_start", "period_end",
         "version", "status", "storage_key", "size_bytes", "retain_until", "generated_at",
+        "wrapped_dek", "dek_algorithm", "kek_id", "content_sha256",
     ];
 
     /// <inheritdoc />
@@ -124,5 +146,9 @@ public sealed class StatementRowMapper : IBulkRowMapper<StatementRow>
         await importer.WriteAsync(row.SizeBytes, NpgsqlDbType.Bigint, cancellationToken).ConfigureAwait(false);
         await importer.WriteAsync(row.RetainUntil, NpgsqlDbType.Date, cancellationToken).ConfigureAwait(false);
         await importer.WriteAsync(row.GeneratedAt, NpgsqlDbType.TimestampTz, cancellationToken).ConfigureAwait(false);
+        await importer.WriteAsync(row.WrappedDek, NpgsqlDbType.Bytea, cancellationToken).ConfigureAwait(false);
+        await importer.WriteAsync(StatementDelivery.Crypto.Keys.KeyWrap.AlgorithmName, NpgsqlDbType.Text, cancellationToken).ConfigureAwait(false);
+        await importer.WriteAsync(row.KekId, NpgsqlDbType.Text, cancellationToken).ConfigureAwait(false);
+        await importer.WriteAsync(row.ContentSha256, NpgsqlDbType.Bytea, cancellationToken).ConfigureAwait(false);
     }
 }

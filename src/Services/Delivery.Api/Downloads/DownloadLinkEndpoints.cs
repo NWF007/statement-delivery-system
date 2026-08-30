@@ -272,6 +272,11 @@ public static class DownloadLinkEndpoints
 
         // Step 6. The insert and the audit share one transaction: a link that exists without a
         // record of who asked for it must be impossible.
+        //
+        // THEY NOW ACTUALLY DO. This comment was here before the audit append was inside the
+        // transaction it describes - the insert committed, and LINK_ISSUED was written afterwards
+        // in a second transaction, so a failure in between produced exactly the live link with no
+        // record that the comment says is impossible. See ADR-0025.
         await unitOfWork.ExecuteAsync(
             async (NpgsqlTransaction transaction, CancellationToken token2) =>
             {
@@ -279,22 +284,24 @@ public static class DownloadLinkEndpoints
                 // plaintext, and the repository never references TokenSecret at all.
                 await tokens.InsertAsync(token, http.Connection.RemoteIpAddress, transaction, token2)
                     .ConfigureAwait(false);
+
+                // LAST STATEMENT IN THE TRANSACTION: the append locks this chain's head, and
+                // everything else on that chain waits behind it until commit.
+                _ = await audit.RecordAsync(
+                    http, AuditAction.LinkIssued, AuditOutcome.Success, subject, id, transaction,
+                    detail: new Dictionary<string, object?>(StringComparer.Ordinal)
+                    {
+                        ["link_id"] = linkId.ToString(),
+
+                        // The HASH is recorded, never the plaintext. This is what correlates a later
+                        // redemption with the issue that produced it.
+                        ["token_hash"] = hash.ToString(),
+                        ["ttl_seconds"] = (long)ttl.TotalSeconds,
+                        ["expires_at"] = token.ExpiresAt.ToString("O", CultureInfo.InvariantCulture),
+                    },
+                    cancellationToken: token2).ConfigureAwait(false);
             },
             cancellationToken).ConfigureAwait(false);
-
-        await audit.RecordAsync(
-            http, AuditAction.LinkIssued, AuditOutcome.Success, subject, id,
-            detail: new Dictionary<string, object?>(StringComparer.Ordinal)
-            {
-                ["link_id"] = linkId.ToString(),
-
-                // The HASH is recorded, never the plaintext. This is what correlates a later
-                // redemption with the issue that produced it.
-                ["token_hash"] = hash.ToString(),
-                ["ttl_seconds"] = (long)ttl.TotalSeconds,
-                ["expires_at"] = token.ExpiresAt.ToString("O", CultureInfo.InvariantCulture),
-            },
-            cancellationToken: cancellationToken).ConfigureAwait(false);
 
         // Step 7. The plaintext leaves the process exactly once, here.
         return Results.Created(
@@ -325,13 +332,35 @@ public static class DownloadLinkEndpoints
         }
 
         bool revoked = await unitOfWork.ExecuteAsync(
-            (NpgsqlTransaction transaction, CancellationToken token) =>
-                tokens.RevokeAsync(id, subject, "CUSTOMER_REQUESTED", transaction, token),
+            async (NpgsqlTransaction transaction, CancellationToken token) =>
+            {
+                bool wasRevoked = await tokens
+                    .RevokeAsync(id, subject, "CUSTOMER_REQUESTED", transaction, token)
+                    .ConfigureAwait(false);
+
+                if (wasRevoked)
+                {
+                    // A REVOCATION IS A STATE CHANGE, so its record binds to the transaction that
+                    // made it. A revoked link with no record of the revocation is the same class of
+                    // hole as a consumed token with no record of the download.
+                    //
+                    // Last statement in the transaction, for the chain-head lock.
+                    _ = await audit.RecordAsync(
+                        http, AuditAction.LinkRevoked, AuditOutcome.Success, subject, null, transaction,
+                        detail: new Dictionary<string, object?>(StringComparer.Ordinal) { ["link_id"] = linkId },
+                        cancellationToken: token).ConfigureAwait(false);
+                }
+
+                return wasRevoked;
+            },
             cancellationToken).ConfigureAwait(false);
 
         if (!revoked)
         {
             // Not found, not owned, already consumed and already revoked are one response.
+            //
+            // The UPDATE matched no row, so nothing was written and there is nothing to bind to -
+            // the transactionless overload is the correct one here.
             await audit.RecordAsync(
                 http, AuditAction.AccessDenied, AuditOutcome.Denied, subject, null,
                 DenialReason.NotFound,
@@ -340,11 +369,6 @@ public static class DownloadLinkEndpoints
 
             return Results.NotFound();
         }
-
-        await audit.RecordAsync(
-            http, AuditAction.LinkRevoked, AuditOutcome.Success, subject, null,
-            detail: new Dictionary<string, object?>(StringComparer.Ordinal) { ["link_id"] = linkId },
-            cancellationToken: cancellationToken).ConfigureAwait(false);
 
         return Results.NoContent();
     }

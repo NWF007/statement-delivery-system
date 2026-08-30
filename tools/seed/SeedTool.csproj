@@ -13,6 +13,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\BuildingBlocks\Persistence\Persistence.csproj" />
+    <ProjectReference Include="..\..\src\BuildingBlocks\Crypto\Crypto.csproj" />
     <ProjectReference Include="..\..\src\BuildingBlocks\Messaging\Messaging.csproj" />
   </ItemGroup>
 

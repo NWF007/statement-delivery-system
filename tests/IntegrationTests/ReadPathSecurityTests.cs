@@ -55,13 +55,24 @@ public sealed class ReadPathSecurityTests
                 VALUES (@account, @customer, '****4321', 'SAVINGS', 'ACTIVE', now());
             INSERT INTO statement (
                 id, account_id, customer_id, period_start, period_end, version, status,
-                storage_key, storage_tier, size_bytes, wrapped_dek, kek_id, iv, auth_tag,
+                storage_key, storage_tier, size_bytes, content_sha256,
+                wrapped_dek, dek_algorithm, kek_id,
                 retain_until, generated_at)
             VALUES (
                 @statement, @account, @customer, @start, @end, 1, 'AVAILABLE',
                 'statements/secret/path.pdf', 'STANDARD', 91234,
-                '\\xdeadbeef'::bytea, 'kek-super-secret', '\\x0102030405060708090a0b0c'::bytea,
-                '\\x0f0e0d0c0b0a09080706050403020100'::bytea,
+
+                -- 32 bytes exactly, required on AVAILABLE rows by V015.
+                --
+                -- decode(..., 'hex') rather than a bytea literal, and that is not cosmetic: inside
+                -- a C# raw string there are no escapes, so the previous '\xdeadbeef' reached
+                -- PostgreSQL as ESCAPE-format input and decoded to TEN bytes rather than four -
+                -- which is how it sat silently under V013's 40-byte wrapped-key floor.
+                decode(repeat('ab', 32), 'hex'),
+
+                -- 61 bytes: the real envelope size (version + nonce + key + tag), so this row has
+                -- the shape a real one would and clears ck_statement_dek_is_wrapped.
+                decode(repeat('cd', 61), 'hex'), 'AES-256-GCM', 'kek-super-secret',
                 @retain, now());
             """,
             new
@@ -359,8 +370,11 @@ public sealed class ReadPathSecurityTests
                 _ = await connection.ExecuteAsync(new CommandDefinition(
                     """
                     INSERT INTO statement (id, account_id, customer_id, period_start, period_end,
-                                           version, status, storage_key, size_bytes, retain_until, generated_at)
-                    VALUES (@id, @account, @customer, @start, @end, 7, 'AVAILABLE', 'k', 1, @retain, now());
+                                           version, status, storage_key, size_bytes, content_sha256,
+                                           wrapped_dek, dek_algorithm, kek_id, retain_until, generated_at)
+                    VALUES (@id, @account, @customer, @start, @end, 7, 'AVAILABLE', 'k', 1,
+                            decode(repeat('ab', 32), 'hex'),
+                            decode(repeat('cd', 61), 'hex'), 'AES-256-GCM', 'kek-test', @retain, now());
                     """,
                     new
                     {

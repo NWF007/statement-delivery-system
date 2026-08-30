@@ -21,11 +21,21 @@
     <ProjectReference Include="..\..\src\BuildingBlocks\Persistence\Persistence.csproj" />
     <ProjectReference Include="..\..\src\BuildingBlocks\ServiceDefaults\ServiceDefaults.csproj" />
 
-    <!-- The two HTTP services, so the token-boundary rules can read their compiled IL.
-         A test project may reference a deployable; the rule that dependencies point inwards
-         applies to src/BuildingBlocks, and BuildingBlocks_ShouldNotDependOn_Services enforces it. -->
+    <!-- EVERY deployable, so the IL-level rules can actually read them.
+         A test project may reference a deployable; the rule that dependencies point inwards applies
+         to src/BuildingBlocks, and BuildingBlocks_ShouldNotDependOn_Services enforces it by reading
+         the .csproj graph, which does not include this project.
+
+         The two workers were added in Prompt 4 and their absence was a real hole: the DataKey rule
+         inspects assemblies found in this project's output, so Generation.Worker - the service
+         Prompt 5 builds around the key hierarchy - was silently outside the rule meant to stop key
+         material reaching a service. A rule that cannot fire for the likeliest offender is not a
+         rule. -->
     <ProjectReference Include="..\..\src\Services\Delivery.Api\Delivery.Api.csproj" />
     <ProjectReference Include="..\..\src\Services\Download.Gateway\Download.Gateway.csproj" />
+    <ProjectReference Include="..\..\src\Services\Generation.Worker\Generation.Worker.csproj" />
+    <ProjectReference Include="..\..\src\Services\Retention.Worker\Retention.Worker.csproj" />
+    <ProjectReference Include="..\..\src\Migrations\Db.Migrator\Db.Migrator.csproj" />
   </ItemGroup>
 
 </Project>

@@ -1,6 +1,7 @@
 using Download.Gateway.Configuration;
 using Download.Gateway.Downloads;
 using Scalar.AspNetCore;
+using StatementDelivery.Crypto;
 using StatementDelivery.Persistence;
 using StatementDelivery.ServiceDefaults;
 using StatementDelivery.ServiceDefaults.HealthChecks;
@@ -18,8 +19,13 @@ WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 builder.AddServiceDefaults();
 builder.AddPersistence(serviceName: "download-gateway");
 builder.AddObjectStorage();
+builder.AddCrypto();
 builder.AddDownloadGateway();
-builder.AddFileSystemContentStore();
+
+// PROMPT 4: the encrypting S3 adapter replaces the filesystem store. includeWriter is false - this
+// service reads statements and must not be able to write one, and that is enforced by what it can
+// inject rather than by everyone remembering not to call the wrong method.
+builder.AddEncryptedContentStore(includeWriter: false);
 
 WebApplication app = builder.Build();
 

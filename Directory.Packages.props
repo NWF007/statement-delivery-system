@@ -69,6 +69,7 @@
   <!-- ── Object storage and validation ────────────────────────────────────── -->
   <ItemGroup>
     <PackageVersion Include="AWSSDK.S3" Version="4.0.102.4" />
+    <PackageVersion Include="AWSSDK.KeyManagementService" Version="4.0.100.11" />
     <PackageVersion Include="FluentValidation" Version="12.1.1" />
     <PackageVersion Include="FluentValidation.DependencyInjectionExtensions" Version="12.1.1" />
   </ItemGroup>

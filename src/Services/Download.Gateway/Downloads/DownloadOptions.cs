@@ -62,6 +62,8 @@ public sealed class DownloadMetrics : IDisposable
     private readonly Counter<long> _incomplete;
     private readonly Counter<long> _completed;
     private readonly Counter<long> _bytes;
+    private readonly Counter<long> _decryptionFailures;
+    private readonly Counter<long> _contentMissing;
 
     /// <summary>Initialises a new instance of the <see cref="DownloadMetrics"/> class.</summary>
     /// <param name="meterFactory">Meter factory from dependency injection.</param>
@@ -96,6 +98,30 @@ public sealed class DownloadMetrics : IDisposable
             "download_bytes_total",
             unit: "By",
             description: "Bytes streamed to clients.");
+
+        // ALERT ON ANY NON-ZERO VALUE. Not a rate, not a threshold, not a percentage of requests -
+        // any value at all. Every other counter here measures something that happens in normal
+        // operation and is interesting only when its rate moves. This one measures a stored object
+        // that failed to authenticate, which means corruption, substitution or tampering. One
+        // occurrence is an incident; waiting for a second is waiting to see whether it spreads.
+        _decryptionFailures = _meter.CreateCounter<long>(
+            "statement_decryption_failure_total",
+            unit: "{failure}",
+            description: "Objects that failed to decrypt. NOT a user error - corruption or tampering. Alert on any non-zero value.");
+
+        // ALSO ALERT ON ANY NON-ZERO VALUE, for the same reason as the counter above: it cannot
+        // happen during correct operation. A statement is marked AVAILABLE in the same statement
+        // that records where its bytes live, so a row that is AVAILABLE with no readable object
+        // means the database and the object store have diverged.
+        //
+        // EMITTED NOW, BEFORE THE JOB THAT FORMALISES IT. Prompt 6 adds a reconciliation sweep and
+        // this divergence is its CHECK 1; a counter that only starts existing alongside the job
+        // that reports it can never answer "how long has this been happening?" - and that is the
+        // first question anyone will ask.
+        _contentMissing = _meter.CreateCounter<long>(
+            "statement_content_missing_total",
+            unit: "{failure}",
+            description: "AVAILABLE statements whose content could not be read. Database and object store have diverged. Alert on any non-zero value.");
     }
 
     /// <summary>
@@ -118,6 +144,9 @@ public sealed class DownloadMetrics : IDisposable
         DenialReason.NotOwner,
         DenialReason.SubjectMismatch,
         DenialReason.NoSubjectClaim,
+        DenialReason.DecryptionFailed,
+        DenialReason.StorageUnavailable,
+        DenialReason.ContentUnavailable,
     };
 
     /// <summary>The label used when a caller passes something not on the known list.</summary>
@@ -141,6 +170,42 @@ public sealed class DownloadMetrics : IDisposable
             new KeyValuePair<string, object?>(
                 "reason",
                 KnownReasons.Contains(reason) ? reason : UnclassifiedReason));
+
+    /// <summary>
+    /// Records an object that failed to decrypt, and denies it as well.
+    /// </summary>
+    /// <remarks>
+    /// Both counters move: the denial counter so the reason breakdown stays complete, and the
+    /// dedicated counter so the alert can be written against one unambiguous series rather than
+    /// against a label filter somebody has to get right.
+    /// </remarks>
+    public void DecryptionFailed()
+    {
+        _decryptionFailures.Add(1);
+        Denied(DenialReason.DecryptionFailed);
+    }
+
+    /// <summary>
+    /// Records an AVAILABLE statement whose content could not be read, and denies it as well.
+    /// </summary>
+    /// <remarks>
+    /// Two counters move, as with <see cref="DecryptionFailed"/>: the denial counter keeps the
+    /// reason breakdown complete, and the dedicated counter gives the alert one unambiguous series.
+    /// </remarks>
+    /// <param name="reason">
+    /// <see cref="DenialReason.StorageUnavailable"/> when the row carries no location, or
+    /// <see cref="DenialReason.ContentUnavailable"/> when it carries one and the object is absent.
+    /// </param>
+    public void ContentMissing(string reason)
+    {
+        _contentMissing.Add(
+            1,
+            new KeyValuePair<string, object?>(
+                "reason",
+                KnownReasons.Contains(reason) ? reason : UnclassifiedReason));
+
+        Denied(reason);
+    }
 
     /// <summary>Records a transfer that did not finish.</summary>
     public void Incomplete() => _incomplete.Add(1);

@@ -23,10 +23,39 @@ public sealed class StatementWriteRepository : IStatementWriteRepository
 
     // period_start is in the predicate, not because id is insufficient to identify the row, but
     // because without it PostgreSQL must visit every partition to find out which one holds it.
-    private const string UpdateStatusSql = """
+    //
+    // ONE STATEMENT, EVERY COLUMN. The status and the content it implies move together or not at
+    // all - which is what the three AVAILABLE check constraints demand, and also what makes the
+    // row consistent for any reader that sees it.
+    //
+    // iv AND auth_tag ARE SET TO NULL ON PURPOSE. V006 created them expecting one-shot GCM per
+    // object; the framed format that shipped in Prompt 4 gives every frame its own nonce and its
+    // own tag, so there is no single IV to record and nothing truthful to put here. Writing them
+    // explicitly rather than omitting them keeps a stale value from a previous generation of the
+    // same statement from surviving into a row that no longer means it. See ADR-0019.
+    private const string MarkAvailableSql = """
         UPDATE statement
-           SET status = @status
-         WHERE id = @id
+           SET status         = 'AVAILABLE',
+               storage_key    = @storageKey,
+               storage_tier   = @storageTier,
+               size_bytes     = @sizeBytes,
+               content_sha256 = @contentSha256,
+               wrapped_dek    = @wrappedDek,
+               dek_algorithm  = @dekAlgorithm,
+               kek_id         = @kekId,
+               iv             = NULL,
+               auth_tag       = NULL,
+               generated_at   = @generatedAt
+         WHERE id           = @id
+           AND period_start = @periodStart;
+        """;
+
+    // No storage or crypto columns touched. A failed render produced no bytes, and nulling the
+    // columns here would erase the envelope of a PREVIOUS successful generation of the same row.
+    private const string MarkFailedSql = """
+        UPDATE statement
+           SET status = 'FAILED'
+         WHERE id           = @id
            AND period_start = @periodStart;
         """;
 
@@ -62,23 +91,64 @@ public sealed class StatementWriteRepository : IStatementWriteRepository
     }
 
     /// <inheritdoc />
-    public async Task<int> UpdateStatusAsync(
+    public async Task<int> MarkAvailableAsync(
         StatementId id,
         DateOnly partitionKey,
-        StatementStatus status,
+        StorageLocation location,
+        DateTimeOffset generatedAt,
+        NpgsqlTransaction transaction,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(location);
+        ArgumentNullException.ThrowIfNull(transaction);
+
+        // Checked here rather than left to the database. The constraint would catch it either way,
+        // but as SQLSTATE 23514 from inside a batch of 50,000 - which names the constraint and not
+        // the statement, and reads like a crypto fault. This names the actual mistake.
+        CryptoEnvelope envelope = location.Envelope
+            ?? throw new ArgumentException(
+                "An AVAILABLE statement requires a crypto envelope: ck_statement_available_has_key_material "
+                + "(V013) and ck_statement_available_has_digest (V015) both reject a row without one.",
+                nameof(location));
+
+        byte[] contentSha256 = envelope.ContentSha256
+            ?? throw new ArgumentException(
+                "The envelope carries no content digest, which ck_statement_available_has_digest (V015) "
+                + "requires on every AVAILABLE row - it is what lets a reader detect a substituted object.",
+                nameof(location));
+
+        return await transaction.Connection!.ExecuteAsync(new CommandDefinition(
+            MarkAvailableSql,
+            new
+            {
+                id = id.Value,
+                periodStart = partitionKey,
+                storageKey = location.Key,
+                storageTier = location.Tier,
+                sizeBytes = location.SizeBytes,
+                contentSha256,
+                wrappedDek = envelope.WrappedDek,
+                dekAlgorithm = envelope.Algorithm,
+                kekId = envelope.KekId,
+                generatedAt,
+            },
+            transaction: transaction,
+            commandTimeout: _timeouts.WriteCommandTimeoutSeconds,
+            cancellationToken: cancellationToken)).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<int> MarkFailedAsync(
+        StatementId id,
+        DateOnly partitionKey,
         NpgsqlTransaction transaction,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(transaction);
 
         return await transaction.Connection!.ExecuteAsync(new CommandDefinition(
-            UpdateStatusSql,
-            new
-            {
-                id = id.Value,
-                periodStart = partitionKey,
-                status = status.ToString().ToUpperInvariant(),
-            },
+            MarkFailedSql,
+            new { id = id.Value, periodStart = partitionKey },
             transaction: transaction,
             commandTimeout: _timeouts.WriteCommandTimeoutSeconds,
             cancellationToken: cancellationToken)).ConfigureAwait(false);

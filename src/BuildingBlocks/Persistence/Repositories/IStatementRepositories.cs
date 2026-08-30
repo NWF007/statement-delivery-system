@@ -56,6 +56,55 @@ public interface IStatementReadRepository
         CancellationToken cancellationToken);
 
     /// <summary>
+    /// Finds one statement on the CALLER'S CONNECTION, inside the CALLER'S TRANSACTION.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// USE THIS OVERLOAD FOR ANY READ WHOSE RESULT GATES A SECURITY OR ACCESS DECISION. The
+    /// overload above is the catalogue path: it opens its own connection at
+    /// <see cref="Connections.ConnectionIntent.ReadEventual"/>, which is correct for browsing and
+    /// wrong for anything that decides whether to serve.
+    /// </para>
+    /// <para>
+    /// Three things go wrong when a gating read runs on its own eventual connection, and the
+    /// download redemption path hit all three:
+    /// </para>
+    /// <list type="bullet">
+    /// <item><description>
+    /// ISOLATION. The read cannot see the transaction that is deciding, and the transaction cannot
+    /// see the read. They are two sessions that happen to run next to each other.
+    /// </description></item>
+    /// <item><description>
+    /// CORRECTNESS. Under replication lag the replica returns null for a row that exists on the
+    /// primary. The caller treats that as a denial and commits anyway, so a single-use token is
+    /// spent on a 404. Worse, stale crypto columns decrypt against the wrong key material and
+    /// raise a ciphertext-integrity error - an integrity alert for what is replication lag.
+    /// </description></item>
+    /// <item><description>
+    /// LIVENESS. Acquiring a second connection while holding a write transaction deadlocks a
+    /// bounded pool: at concurrency equal to the pool size, every holder waits for a slot only
+    /// another holder can release.
+    /// </description></item>
+    /// </list>
+    /// <para>
+    /// Same SQL, same ownership predicate, same partition key as the overload above. Only the
+    /// connection changes. See docs/adr/0024-security-gating-reads-run-in-the-callers-transaction.md.
+    /// </para>
+    /// </remarks>
+    /// <param name="id">The statement identifier.</param>
+    /// <param name="periodStart">The partition key. Required; see the remarks above.</param>
+    /// <param name="owner">The authenticated subject. Goes into the WHERE clause.</param>
+    /// <param name="transaction">The caller's transaction. The command runs on its connection.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The statement, or null when it does not exist or is not owned by the caller.</returns>
+    Task<Statement?> FindAsync(
+        StatementId id,
+        DateOnly periodStart,
+        CustomerId owner,
+        NpgsqlTransaction transaction,
+        CancellationToken cancellationToken);
+
+    /// <summary>
     /// Lists a customer's available statements, newest first, one keyset page at a time.
     /// </summary>
     /// <remarks>
@@ -95,23 +144,75 @@ public interface IStatementWriteRepository
     Task InsertAsync(Statement statement, NpgsqlTransaction transaction, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Moves a statement to a new lifecycle status.
+    /// Publishes a rendered statement: AVAILABLE, with everything needed to find and open its bytes.
     /// </summary>
     /// <remarks>
-    /// Takes <paramref name="partitionKey"/> for the same reason
-    /// <see cref="IStatementReadRepository.FindAsync"/> does: without it, the UPDATE has to find
-    /// the row by scanning every partition.
+    /// <para>
+    /// THIS REPLACED A GENERAL <c>UpdateStatusAsync(id, partitionKey, status, ...)</c>, WHICH COULD
+    /// NOT EXPRESS A LEGAL TRANSITION TO AVAILABLE AND WAS THEREFORE A TRAP.
+    /// </para>
+    /// <para>
+    /// Three constraints make an AVAILABLE row inseparable from its content:
+    /// <c>ck_statement_available_has_storage</c> (V006) wants a storage key,
+    /// <c>ck_statement_available_has_key_material</c> (V013) wants a wrapped DEK and a KEK id, and
+    /// <c>ck_statement_available_has_digest</c> (V015) wants a digest. A method that set only
+    /// <c>status</c> could satisfy none of them, so every call would have failed with SQLSTATE
+    /// 23514 - and a check-constraint violation surfacing during statement generation reads as a
+    /// crypto defect, which is a day spent in the wrong subsystem.
+    /// </para>
+    /// <para>
+    /// The signature makes that unreachable instead of merely unlikely: there is no way to call
+    /// this without the envelope, and no other method that reaches AVAILABLE at all. Same reasoning
+    /// as the domain state machine - illegal states should be unconstructable, not merely rejected.
+    /// </para>
+    /// <para>
+    /// SIZE AND DIGEST COME FROM <paramref name="location"/>, not from separate parameters.
+    /// <see cref="StorageLocation.SizeBytes"/> and <c>Envelope.ContentSha256</c> already hold them,
+    /// and a second parameter for a value the object carries is a second source that can disagree
+    /// with the first.
+    /// </para>
+    /// </remarks>
+    /// <param name="id">The statement identifier.</param>
+    /// <param name="partitionKey">The statement's <c>period_start</c>. Required, so the UPDATE prunes.</param>
+    /// <param name="location">
+    /// Where the bytes are and how to open them. Its <see cref="StorageLocation.Envelope"/> must not
+    /// be null: an AVAILABLE statement without key material cannot be stored, and cannot be read.
+    /// </param>
+    /// <param name="generatedAt">When the bytes were rendered.</param>
+    /// <param name="transaction">The caller's transaction.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Rows affected; zero means no such statement in that partition.</returns>
+    Task<int> MarkAvailableAsync(
+        StatementId id,
+        DateOnly partitionKey,
+        StorageLocation location,
+        DateTimeOffset generatedAt,
+        NpgsqlTransaction transaction,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Marks a statement FAILED so it can be retried.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// NO REASON PARAMETER, AND THE OMISSION IS DELIBERATE. There is no <c>failure_reason</c> column
+    /// on <c>statement</c>, and adding one would put the explanation somewhere mutable, unversioned
+    /// and overwritten by the next attempt.
+    /// </para>
+    /// <para>
+    /// The reason belongs in the audit record the caller appends in this same transaction, where it
+    /// is hash-chained, append-only, and keeps the history of every attempt rather than only the
+    /// last. A parameter this method could not honestly persist would be worse than none.
+    /// </para>
     /// </remarks>
     /// <param name="id">The statement identifier.</param>
     /// <param name="partitionKey">The statement's <c>period_start</c>.</param>
-    /// <param name="status">The new status.</param>
     /// <param name="transaction">The caller's transaction.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>The number of rows affected; zero means the row was not found.</returns>
-    Task<int> UpdateStatusAsync(
+    /// <returns>Rows affected; zero means no such statement in that partition.</returns>
+    Task<int> MarkFailedAsync(
         StatementId id,
         DateOnly partitionKey,
-        StatementStatus status,
         NpgsqlTransaction transaction,
         CancellationToken cancellationToken);
 }

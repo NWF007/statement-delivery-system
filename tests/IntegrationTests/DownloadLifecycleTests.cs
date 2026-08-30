@@ -1,3 +1,4 @@
+using System.Diagnostics.Metrics;
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
@@ -18,26 +19,24 @@ namespace IntegrationTests;
 /// production, so a privilege the gateway must not have cannot be accidentally available here.
 /// </remarks>
 [Collection(PostgresCollection.Name)]
-public sealed class DownloadLifecycleTests : IDisposable
+public sealed class DownloadLifecycleTests
 {
     private readonly PostgresFixture _postgres;
-    private readonly string _contentRoot = DownloadScenario.CreateContentRoot();
+    private readonly MinioFixture _minio;
 
     /// <summary>Initialises a new instance of the <see cref="DownloadLifecycleTests"/> class.</summary>
     /// <param name="postgres">The shared PostgreSQL fixture.</param>
-    public DownloadLifecycleTests(PostgresFixture postgres) => _postgres = postgres;
-
-    /// <inheritdoc />
-    public void Dispose()
+    /// <param name="minio">The shared object storage fixture.</param>
+    /// <remarks>
+    /// PROMPT 4 REPLACED THE TEMP DIRECTORY WITH A BUCKET. These tests are otherwise unchanged: the
+    /// same assertions, over the same endpoints, against content that is now encrypted at rest. That
+    /// they needed no other edit is the clearest evidence available that the port was the right
+    /// shape - the fixture changed, the expectations did not.
+    /// </remarks>
+    public DownloadLifecycleTests(PostgresFixture postgres, MinioFixture minio)
     {
-        try
-        {
-            Directory.Delete(_contentRoot, recursive: true);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            // A leftover temp directory is not worth failing a test run over.
-        }
+        _postgres = postgres;
+        _minio = minio;
     }
 
     private DeliveryApiFactory CreateApi() => new(_postgres.ConnectionStringFor("app_delivery"));
@@ -48,7 +47,7 @@ public sealed class DownloadLifecycleTests : IDisposable
         int denialFloorMilliseconds = 0) =>
         new(
             _postgres.ConnectionStringFor("app_download"),
-            _contentRoot,
+            _minio.ServiceUrl,
             redeemPerMinute,
             permitLimit,
             denialFloorMilliseconds);
@@ -69,7 +68,7 @@ public sealed class DownloadLifecycleTests : IDisposable
         const int Attempts = 50;
 
         SeededStatement seeded = await DownloadScenario
-            .SeedAsync(_postgres, _contentRoot, cancellationToken: cancellationToken).ConfigureAwait(true);
+            .SeedAsync(_postgres, _minio, cancellationToken: cancellationToken).ConfigureAwait(true);
 
         using DeliveryApiFactory api = CreateApi();
         IssuedLink link = await DownloadScenario
@@ -170,7 +169,7 @@ public sealed class DownloadLifecycleTests : IDisposable
         using DownloadGatewayFactory gateway = CreateGateway();
 
         SeededStatement seeded = await DownloadScenario
-            .SeedAsync(_postgres, _contentRoot, cancellationToken: cancellationToken).ConfigureAwait(true);
+            .SeedAsync(_postgres, _minio, cancellationToken: cancellationToken).ConfigureAwait(true);
 
         // --- consumed ---
         IssuedLink consumedLink = await DownloadScenario.IssueAsync(api, seeded, cancellationToken: cancellationToken).ConfigureAwait(true);
@@ -238,6 +237,328 @@ public sealed class DownloadLifecycleTests : IDisposable
     }
 
     [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]
+    public async Task CorruptedFirstFrame_Returns404_AuditsDecryptionFailed_AndCountsIt()
+    {
+        // ★ THE FAILURE THAT IS NOT THE CALLER'S FAULT, caught BEFORE the response starts.
+        //
+        // Everything else in this file is a denial the caller caused: a spent token, a revoked one,
+        // somebody else's statement. This is corruption or tampering - the token was valid,
+        // ownership was proven, the row was found, and the BYTES did not authenticate.
+        //
+        // Corrupting the FIRST body frame means the failure surfaces on the first read, before a
+        // single byte has been written, so the uniform denial is still expressible. Three things
+        // must hold and each fails differently if missing: the caller gets the SAME 404 as every
+        // other denial (or the response is an oracle), the audit trail records DECRYPTION_FAILED
+        // (or the only evidence of tampering is a log line nobody kept), and the counter moves (or
+        // nobody is paged, which is the point of a control alerted on any non-zero value).
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+
+        SeededStatement seeded = await DownloadScenario
+            .SeedAsync(_postgres, _minio, sizeBytes: 8 * 1024, cancellationToken: cancellationToken).ConfigureAwait(true);
+
+        // Byte 64 is inside the first frame's ciphertext: 48-byte header, then a 4-byte length
+        // prefix, so the payload starts at 52.
+        await CorruptObjectByteAsync(seeded.StorageKey, 64, cancellationToken).ConfigureAwait(true);
+
+        using DeliveryApiFactory api = CreateApi();
+        using DownloadGatewayFactory gateway = CreateGateway();
+
+        IssuedLink link = await DownloadScenario.IssueAsync(api, seeded, cancellationToken: cancellationToken).ConfigureAwait(true);
+        DateTimeOffset since = await NowAsync(cancellationToken).ConfigureAwait(true);
+
+        long failures = 0;
+        using MeterListener meterListener = ListenForDecryptionFailures(() => Interlocked.Increment(ref failures));
+
+        using HttpClient client = gateway.CreateClient();
+        using HttpResponseMessage response = await client
+            .GetAsync(Redeem(link.Plaintext), cancellationToken).ConfigureAwait(true);
+
+        string body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(true);
+        meterListener.Dispose();
+
+        // NOT a 500. A problem document carrying a traceId would say "the failure was ours, not your
+        // token's" - which is exactly the distinction an attacker probing the storage layer wants.
+        response.StatusCode.ShouldBe(HttpStatusCode.NotFound);
+        body.ShouldNotContain("traceId", Case.Sensitive);
+
+        // And byte-identical to the ordinary denials, headers included. A 404 that differs in
+        // Content-Length or Content-Disposition is still an oracle.
+        response.Content.Headers.ContentType?.MediaType.ShouldBe("application/problem+json");
+        response.Content.Headers.ContentDisposition.ShouldBeNull("the response must not still look like a PDF download");
+
+        Interlocked.Read(ref failures)
+            .ShouldBe(1, "statement_decryption_failure_total must move - it is alerted on any non-zero value");
+
+        await AssertDecryptionAuditedAsync(seeded.StatementId, since, cancellationToken).ConfigureAwait(true);
+    }
+
+    [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]
+    public async Task CorruptedLaterFrame_AbortsTheTransfer_AndIsStillAudited()
+    {
+        // ★ THE HARD HALF, AND THE ONE A FIRST-FRAME TEST CANNOT REACH.
+        //
+        // Here bytes are already on the wire when the tag fails. The response cannot be turned into
+        // a 404 any more - that is the limitation ADR-0019 names and accepts - so the only thing
+        // still under our control is whether the client can TELL. Ending cleanly would give it a
+        // 200 with a Content-Length it never reached: a silently truncated statement, which is the
+        // precise failure the whole framed format exists to prevent. Aborting makes it unambiguous.
+        //
+        // The audit record and the counter must fire on this path too, and that is what regressed
+        // silently before: CiphertextIntegrityException is neither IOException nor
+        // CryptographicException, so the pre-existing catch never saw it.
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+
+        // Two full frames plus a tail, so there is a SECOND frame to corrupt and a first frame's
+        // worth of bytes (64 KiB) already delivered when it fails.
+        const int SizeBytes = (128 * 1024) + 512;
+
+        SeededStatement seeded = await DownloadScenario
+            .SeedAsync(_postgres, _minio, sizeBytes: SizeBytes, cancellationToken: cancellationToken).ConfigureAwait(true);
+
+        // Header(48) + frame0(4 + 65536 + 16) = 65604 is where frame 1 begins; +4 skips its length
+        // prefix, +100 lands inside its ciphertext.
+        const int SecondFramePayload = 48 + 4 + 65536 + 16 + 4 + 100;
+        await CorruptObjectByteAsync(seeded.StorageKey, SecondFramePayload, cancellationToken).ConfigureAwait(true);
+
+        using DeliveryApiFactory api = CreateApi();
+        using DownloadGatewayFactory gateway = CreateGateway();
+
+        IssuedLink link = await DownloadScenario.IssueAsync(api, seeded, cancellationToken: cancellationToken).ConfigureAwait(true);
+        DateTimeOffset since = await NowAsync(cancellationToken).ConfigureAwait(true);
+
+        long failures = 0;
+        using MeterListener meterListener = ListenForDecryptionFailures(() => Interlocked.Increment(ref failures));
+
+        using HttpClient client = gateway.CreateClient();
+
+        long received = 0;
+        bool transferFailed = false;
+
+        try
+        {
+            using HttpResponseMessage response = await client
+                .GetAsync(Redeem(link.Plaintext), HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+                .ConfigureAwait(true);
+
+            // The headers went out before the corruption was reachable, so this really is a 200.
+            response.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+            await using Stream stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(true);
+            received = await DrainAsync(stream, cancellationToken).ConfigureAwait(true);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException)
+        {
+            transferFailed = true;
+        }
+
+        meterListener.Dispose();
+
+        // THE ASSERTION THAT MATTERS: the client must not have received a complete statement. Either
+        // the connection died (the expected path) or the body was short - never a clean, full-length
+        // transfer of authentic-but-tampered content.
+        (transferFailed || received < SizeBytes)
+            .ShouldBeTrue($"the transfer delivered all {SizeBytes} bytes cleanly despite a corrupt frame");
+
+        // And it got at least the first frame, or the corruption was not where this test believes it
+        // was and the abort branch was never exercised.
+        (transferFailed ? received : 0).ShouldBeGreaterThan(
+            0,
+            "no bytes were delivered before the failure, so this exercised the pre-response path, not the abort path");
+
+        Interlocked.Read(ref failures).ShouldBe(1);
+
+        await AssertDecryptionAuditedAsync(seeded.StatementId, since, cancellationToken).ConfigureAwait(true);
+    }
+
+    [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]
+    public async Task RepointedStatementRow_FailsTheFrameAad_AndIsAudited()
+    {
+        // ★ THE DATABASE-LEVEL ATTACK, ISOLATED TO THE AAD.
+        //
+        // An attacker with write access to the statement table repoints a row at a different object.
+        // The subtlety, and the reason the obvious version of this test proves the wrong thing:
+        // repointing at ANOTHER CUSTOMER's object fails at the CEK unwrap, two tiers above the AAD -
+        // a real defence, but not this one, and the test would pass with the AAD removed entirely.
+        //
+        // So the decoy object is written for the SAME customer. The CEK matches, the DEK unwraps
+        // cleanly, the header authenticates - and the only thing that still disagrees is the
+        // statement id bound into every frame. That isolates the frame AAD as the thing under test,
+        // which is what ADR-0021 actually claims.
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+
+        SeededStatement victim = await DownloadScenario
+            .SeedAsync(_postgres, _minio, cancellationToken: cancellationToken).ConfigureAwait(true);
+
+        // A second object for the SAME customer, under a different statement id. It has no row of
+        // its own - it exists only to be pointed at.
+        byte[] decoyContent = System.Security.Cryptography.RandomNumberGenerator.GetBytes(6144);
+        var decoyStatementId = Guid.CreateVersion7();
+
+        (StatementDelivery.ServiceDefaults.Storage.S3StatementContentStore store, Amazon.S3.IAmazonS3 s3) =
+            _minio.CreateStore(_postgres);
+
+        StatementDelivery.ServiceDefaults.Storage.StoredObject decoy;
+
+        using (s3)
+        {
+            using var plaintext = new MemoryStream(decoyContent, writable: false);
+
+            decoy = await store.WriteAsync(
+                plaintext,
+                new StatementDelivery.Crypto.Framing.CryptoContext(decoyStatementId, victim.CustomerId, 1),
+                new StatementDelivery.Domain.Identifiers.AccountId(victim.AccountId),
+                StatementDelivery.Domain.ValueObjects.StatementPeriod.Create(victim.Period, victim.Period.AddMonths(1).AddDays(-1)),
+                StatementDelivery.Crypto.Keys.CohortAssignment.KekIdFor(
+                    StatementDelivery.Crypto.Keys.CohortAssignment.ForCustomer(
+                        new StatementDelivery.Domain.Identifiers.CustomerId(victim.CustomerId))),
+                cancellationToken).ConfigureAwait(true);
+        }
+
+        await using (NpgsqlConnection admin = await _postgres.OpenAdminAsync(cancellationToken).ConfigureAwait(true))
+        {
+            // Everything needed to look legitimate: the decoy's key, size, digest and envelope. A
+            // mismatched wrapped DEK would fail at the key layer and prove nothing about the AAD.
+            _ = await admin.ExecuteAsync(new CommandDefinition(
+                """
+                UPDATE statement
+                   SET storage_key    = @key,
+                       size_bytes     = @size,
+                       content_sha256 = @sha,
+                       wrapped_dek    = @dek,
+                       dek_algorithm  = @algorithm,
+                       kek_id         = @kekId
+                 WHERE id = @victim AND period_start = @period;
+                """,
+                new
+                {
+                    victim = victim.StatementId,
+                    period = victim.Period,
+                    key = decoy.Key,
+                    size = decoy.PlaintextLength,
+                    sha = decoy.Envelope.ContentSha256,
+                    dek = decoy.Envelope.WrappedDek,
+                    algorithm = decoy.Envelope.Algorithm,
+                    kekId = decoy.Envelope.KekId,
+                },
+                commandTimeout: 30,
+                cancellationToken: cancellationToken)).ConfigureAwait(true);
+        }
+
+        using DeliveryApiFactory api = CreateApi();
+        using DownloadGatewayFactory gateway = CreateGateway();
+
+        IssuedLink link = await DownloadScenario.IssueAsync(api, victim, cancellationToken: cancellationToken).ConfigureAwait(true);
+        DateTimeOffset since = await NowAsync(cancellationToken).ConfigureAwait(true);
+
+        using HttpClient client = gateway.CreateClient();
+        using HttpResponseMessage response = await client
+            .GetAsync(Redeem(link.Plaintext), cancellationToken).ConfigureAwait(true);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.NotFound);
+
+        // The decoy content is 6 KiB of random bytes, well under one frame, so if the AAD were not
+        // checked the WHOLE of it would have been released in a single authentic-looking frame.
+        // Searching the response for any 32-byte run of it is therefore a real assertion, not the
+        // vacuous "a problem document is not a PDF" it would be against a multi-frame object.
+        byte[] received = await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(true);
+        IndexOfSequence(received, decoyContent.AsSpan(0, 32).ToArray())
+            .ShouldBe(-1, "not one byte of the decoy object may reach the wire");
+
+        await AssertDecryptionAuditedAsync(victim.StatementId, since, cancellationToken).ConfigureAwait(true);
+    }
+
+    private async Task CorruptObjectByteAsync(string storageKey, int offset, CancellationToken cancellationToken)
+    {
+        using Amazon.S3.IAmazonS3 s3 = _minio.CreateClient();
+
+        using Amazon.S3.Model.GetObjectResponse original = await s3.GetObjectAsync(
+            new Amazon.S3.Model.GetObjectRequest { BucketName = MinioFixture.BucketName, Key = storageKey },
+            cancellationToken).ConfigureAwait(true);
+
+        using var buffer = new MemoryStream();
+        await original.ResponseStream.CopyToAsync(buffer, cancellationToken).ConfigureAwait(true);
+
+        byte[] bytes = buffer.ToArray();
+        bytes.Length.ShouldBeGreaterThan(offset, "the fixture object must be long enough to corrupt at this offset");
+        bytes[offset] ^= 0x01;
+
+        using var corrupted = new MemoryStream(bytes, writable: false);
+        _ = await s3.PutObjectAsync(
+            new Amazon.S3.Model.PutObjectRequest
+            {
+                BucketName = MinioFixture.BucketName,
+                Key = storageKey,
+                InputStream = corrupted,
+            },
+            cancellationToken).ConfigureAwait(true);
+    }
+
+    private static MeterListener ListenForDecryptionFailures(Action onMeasurement)
+    {
+        var listener = new MeterListener
+        {
+            InstrumentPublished = (instrument, l) =>
+            {
+                if (instrument.Name == "statement_decryption_failure_total")
+                {
+                    l.EnableMeasurementEvents(instrument);
+                }
+            },
+        };
+
+        listener.SetMeasurementEventCallback<long>((_, _, _, _) => onMeasurement());
+        listener.Start();
+
+        return listener;
+    }
+
+    private async Task AssertDecryptionAuditedAsync(Guid statementId, DateTimeOffset since, CancellationToken cancellationToken)
+    {
+        await using NpgsqlConnection connection = await _postgres.OpenAdminAsync(cancellationToken).ConfigureAwait(true);
+
+        int audited = await connection.ExecuteScalarAsync<int>(new CommandDefinition(
+            """
+            SELECT count(*) FROM audit_event
+             WHERE statement_id = @statement
+               AND action = 'ACCESS_DENIED'
+               AND denial_reason_code = 'DECRYPTION_FAILED'
+               AND occurred_at >= @since;
+            """,
+            new { statement = statementId, since },
+            commandTimeout: 30,
+            cancellationToken: cancellationToken)).ConfigureAwait(true);
+
+        audited.ShouldBe(1, "a decryption failure is an incident and must be in the audit trail");
+
+        // And no DOWNLOAD_COMPLETED. A run recording both would mean the audit trail says a customer
+        // received a statement they did not.
+        int completed = await connection.ExecuteScalarAsync<int>(new CommandDefinition(
+            """
+            SELECT count(*) FROM audit_event
+             WHERE statement_id = @statement AND action = 'DOWNLOAD_COMPLETED' AND occurred_at >= @since;
+            """,
+            new { statement = statementId, since },
+            commandTimeout: 30,
+            cancellationToken: cancellationToken)).ConfigureAwait(true);
+
+        completed.ShouldBe(0);
+    }
+
+    private static int IndexOfSequence(byte[] haystack, byte[] needle)
+    {
+        for (int i = 0; i + needle.Length <= haystack.Length; i++)
+        {
+            if (haystack.AsSpan(i, needle.Length).SequenceEqual(needle))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+
+    [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]
     public async Task Denials_ArePaddedToTheConfiguredTimingFloor()
     {
         // "Comparable timing" is the fourth clause of the identical-response rule, and it is the one
@@ -252,7 +573,7 @@ public sealed class DownloadLifecycleTests : IDisposable
         const int FloorMs = 250;
 
         SeededStatement seeded = await DownloadScenario
-            .SeedAsync(_postgres, _contentRoot, cancellationToken: cancellationToken).ConfigureAwait(true);
+            .SeedAsync(_postgres, _minio, cancellationToken: cancellationToken).ConfigureAwait(true);
 
         using DeliveryApiFactory api = CreateApi();
         using DownloadGatewayFactory gateway = CreateGateway(denialFloorMilliseconds: FloorMs);
@@ -322,8 +643,8 @@ public sealed class DownloadLifecycleTests : IDisposable
         // mintable, and the refusal must not confirm that the statement exists.
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
 
-        SeededStatement theirs = await DownloadScenario.SeedAsync(_postgres, _contentRoot, cancellationToken: cancellationToken).ConfigureAwait(true);
-        SeededStatement mine = await DownloadScenario.SeedAsync(_postgres, _contentRoot, cancellationToken: cancellationToken).ConfigureAwait(true);
+        SeededStatement theirs = await DownloadScenario.SeedAsync(_postgres, _minio, cancellationToken: cancellationToken).ConfigureAwait(true);
+        SeededStatement mine = await DownloadScenario.SeedAsync(_postgres, _minio, cancellationToken: cancellationToken).ConfigureAwait(true);
 
         using DeliveryApiFactory api = CreateApi();
 
@@ -349,8 +670,8 @@ public sealed class DownloadLifecycleTests : IDisposable
         // bytes - not whatever the gateway would have found by another route.
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
 
-        SeededStatement a = await DownloadScenario.SeedAsync(_postgres, _contentRoot, cancellationToken: cancellationToken).ConfigureAwait(true);
-        SeededStatement b = await DownloadScenario.SeedAsync(_postgres, _contentRoot, cancellationToken: cancellationToken).ConfigureAwait(true);
+        SeededStatement a = await DownloadScenario.SeedAsync(_postgres, _minio, cancellationToken: cancellationToken).ConfigureAwait(true);
+        SeededStatement b = await DownloadScenario.SeedAsync(_postgres, _minio, cancellationToken: cancellationToken).ConfigureAwait(true);
 
         using DeliveryApiFactory api = CreateApi();
         using DownloadGatewayFactory gateway = CreateGateway();
@@ -381,7 +702,7 @@ public sealed class DownloadLifecycleTests : IDisposable
     {
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
 
-        SeededStatement seeded = await DownloadScenario.SeedAsync(_postgres, _contentRoot, cancellationToken: cancellationToken).ConfigureAwait(true);
+        SeededStatement seeded = await DownloadScenario.SeedAsync(_postgres, _minio, cancellationToken: cancellationToken).ConfigureAwait(true);
 
         using DeliveryApiFactory api = CreateApi();
         using DownloadGatewayFactory gateway = CreateGateway();
@@ -415,7 +736,7 @@ public sealed class DownloadLifecycleTests : IDisposable
     {
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
 
-        SeededStatement seeded = await DownloadScenario.SeedAsync(_postgres, _contentRoot, cancellationToken: cancellationToken).ConfigureAwait(true);
+        SeededStatement seeded = await DownloadScenario.SeedAsync(_postgres, _minio, cancellationToken: cancellationToken).ConfigureAwait(true);
 
         using DeliveryApiFactory api = CreateApi();
         using DownloadGatewayFactory gateway = CreateGateway();
@@ -438,7 +759,7 @@ public sealed class DownloadLifecycleTests : IDisposable
     {
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
 
-        SeededStatement seeded = await DownloadScenario.SeedAsync(_postgres, _contentRoot, cancellationToken: cancellationToken).ConfigureAwait(true);
+        SeededStatement seeded = await DownloadScenario.SeedAsync(_postgres, _minio, cancellationToken: cancellationToken).ConfigureAwait(true);
 
         using DeliveryApiFactory api = CreateApi();
         using DownloadGatewayFactory gateway = CreateGateway();
@@ -477,7 +798,7 @@ public sealed class DownloadLifecycleTests : IDisposable
     {
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
 
-        SeededStatement seeded = await DownloadScenario.SeedAsync(_postgres, _contentRoot, cancellationToken: cancellationToken).ConfigureAwait(true);
+        SeededStatement seeded = await DownloadScenario.SeedAsync(_postgres, _minio, cancellationToken: cancellationToken).ConfigureAwait(true);
 
         using DeliveryApiFactory api = CreateApi();
         using DownloadGatewayFactory gateway = CreateGateway();
@@ -539,7 +860,7 @@ public sealed class DownloadLifecycleTests : IDisposable
         // honour. Asserting only the first would pass right up until the middleware lands.
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
 
-        SeededStatement seeded = await DownloadScenario.SeedAsync(_postgres, _contentRoot, cancellationToken: cancellationToken).ConfigureAwait(true);
+        SeededStatement seeded = await DownloadScenario.SeedAsync(_postgres, _minio, cancellationToken: cancellationToken).ConfigureAwait(true);
 
         using DeliveryApiFactory api = CreateApi();
         IssuedLink link = await DownloadScenario.IssueAsync(api, seeded, cancellationToken: cancellationToken).ConfigureAwait(true);
@@ -576,7 +897,7 @@ public sealed class DownloadLifecycleTests : IDisposable
         // audit trail's JSONB detail, which is the most likely accident.
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
 
-        SeededStatement seeded = await DownloadScenario.SeedAsync(_postgres, _contentRoot, cancellationToken: cancellationToken).ConfigureAwait(true);
+        SeededStatement seeded = await DownloadScenario.SeedAsync(_postgres, _minio, cancellationToken: cancellationToken).ConfigureAwait(true);
 
         using DeliveryApiFactory api = CreateApi();
         using DownloadGatewayFactory gateway = CreateGateway();
@@ -713,7 +1034,7 @@ public sealed class DownloadLifecycleTests : IDisposable
 
         using DownloadGatewayFactory gateway = new(
             _postgres.ConnectionStringFor("app_download"),
-            _contentRoot,
+            _minio.ServiceUrl,
             redeemPerMinute: 1000,
             permitLimit: 1000,
 
@@ -774,7 +1095,7 @@ public sealed class DownloadLifecycleTests : IDisposable
         const int SizeBytes = 200 * 1024 * 1024;
 
         SeededStatement seeded = await DownloadScenario
-            .SeedAsync(_postgres, _contentRoot, SizeBytes, cancellationToken).ConfigureAwait(true);
+            .SeedAsync(_postgres, _minio, SizeBytes, cancellationToken).ConfigureAwait(true);
 
         using DeliveryApiFactory api = CreateApi();
         using DownloadGatewayFactory gateway = CreateGateway();
@@ -814,13 +1135,86 @@ public sealed class DownloadLifecycleTests : IDisposable
     }
 
     [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]
+    public async Task EndToEndDownload_200MB_UsesConstantMemory()
+    {
+        // THE PROMPT 4 VERSION OF THE PROMPT 3 TEST, and the reason it is a separate test rather
+        // than a rename: it asserts one thing more.
+        //
+        // LargeStatement_StreamsWithoutHeapGrowth proves the transfer is O(1) in memory. This proves
+        // that it is O(1) in memory AND that what came out is byte-for-byte what went in - through a
+        // 3,200-frame decryption, every frame separately authenticated. Constant memory over
+        // corrupted output would be a passing test and a broken product.
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        const int SizeBytes = 200 * 1024 * 1024;
+
+        SeededStatement seeded = await DownloadScenario
+            .SeedAsync(_postgres, _minio, SizeBytes, cancellationToken).ConfigureAwait(true);
+
+        byte[] expectedDigest = System.Security.Cryptography.SHA256.HashData(seeded.Content);
+
+        using DeliveryApiFactory api = CreateApi();
+        using DownloadGatewayFactory gateway = CreateGateway();
+
+        IssuedLink link = await DownloadScenario.IssueAsync(api, seeded, cancellationToken: cancellationToken).ConfigureAwait(true);
+
+        using HttpClient client = gateway.CreateClient();
+
+        GC.Collect(2, GCCollectionMode.Forced, blocking: true);
+        GC.WaitForPendingFinalizers();
+        GC.Collect(2, GCCollectionMode.Forced, blocking: true);
+        long before = GC.GetTotalMemory(forceFullCollection: true);
+
+        long received;
+        byte[] actualDigest;
+
+        using (HttpResponseMessage response = await client
+            .GetAsync(Redeem(link.Plaintext), HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+            .ConfigureAwait(true))
+        {
+            response.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+            // The PLAINTEXT length, from the row. The stored object is larger by 48 bytes plus 20
+            // per frame; a client told the ciphertext length would wait forever for bytes that do
+            // not exist.
+            response.Content.Headers.ContentLength.ShouldBe(SizeBytes);
+
+            await using Stream stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(true);
+
+            using var digest = System.Security.Cryptography.IncrementalHash.CreateHash(
+                System.Security.Cryptography.HashAlgorithmName.SHA256);
+
+            byte[] buffer = new byte[64 * 1024];
+            received = 0;
+
+            int read;
+            while ((read = await stream.ReadAsync(buffer, cancellationToken).ConfigureAwait(true)) > 0)
+            {
+                digest.AppendData(buffer.AsSpan(0, read));
+                received += read;
+            }
+
+            actualDigest = digest.GetHashAndReset();
+        }
+
+        received.ShouldBe(SizeBytes);
+        actualDigest.ShouldBe(expectedDigest, "the decrypted bytes must be exactly what was encrypted");
+
+        long after = GC.GetTotalMemory(forceFullCollection: true);
+        long delta = after - before;
+
+        delta.ShouldBeLessThan(
+            10L * 1024 * 1024,
+            $"an encrypted 200 MB download grew the managed heap by {delta / (1024 * 1024)} MB; framed decryption must stay O(1)");
+    }
+
+    [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]
     public async Task ClientDisconnect_AbortsRead_AndAuditsIncomplete()
     {
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
         const int SizeBytes = 64 * 1024 * 1024;
 
         SeededStatement seeded = await DownloadScenario
-            .SeedAsync(_postgres, _contentRoot, SizeBytes, cancellationToken).ConfigureAwait(true);
+            .SeedAsync(_postgres, _minio, SizeBytes, cancellationToken).ConfigureAwait(true);
 
         using DeliveryApiFactory api = CreateApi();
         using DownloadGatewayFactory gateway = CreateGateway();
@@ -869,7 +1263,7 @@ public sealed class DownloadLifecycleTests : IDisposable
         const int SizeBytes = 64 * 1024 * 1024;
 
         SeededStatement seeded = await DownloadScenario
-            .SeedAsync(_postgres, _contentRoot, SizeBytes, cancellationToken).ConfigureAwait(true);
+            .SeedAsync(_postgres, _minio, SizeBytes, cancellationToken).ConfigureAwait(true);
 
         using DeliveryApiFactory api = CreateApi();
         using DownloadGatewayFactory gateway = CreateGateway();
@@ -922,7 +1316,7 @@ public sealed class DownloadLifecycleTests : IDisposable
         // lifecycle, writing to every chain the events hash to. Then verify.
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
 
-        SeededStatement seeded = await DownloadScenario.SeedAsync(_postgres, _contentRoot, cancellationToken: cancellationToken).ConfigureAwait(true);
+        SeededStatement seeded = await DownloadScenario.SeedAsync(_postgres, _minio, cancellationToken: cancellationToken).ConfigureAwait(true);
 
         using DeliveryApiFactory api = CreateApi();
         using DownloadGatewayFactory gateway = CreateGateway();

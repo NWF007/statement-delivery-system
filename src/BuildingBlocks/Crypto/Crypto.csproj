@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <AssemblyName>StatementDelivery.Crypto</AssemblyName>
+    <RootNamespace>StatementDelivery.Crypto</RootNamespace>
+  </PropertyGroup>
+
+  <!--
+    ADDED BY PROMPT 4. Prompt 1 created four building blocks; this is the fifth, and it is purely
+    additive - nothing that existed before it changed shape to accommodate it.
+
+    WHY ITS OWN PROJECT rather than a folder inside Persistence or ServiceDefaults:
+
+      * DataKey holds plaintext key material. An architecture test asserts that NO project outside
+        this one references that type, and a rule of that shape needs an assembly boundary to be
+        enforceable at all - "no other folder" is not something the compiler or Cecil can check.
+      * The cipher is pure computation over streams. It has no database, no HTTP and no AWS SDK in
+        its reference graph, which keeps it testable without any of them and keeps the tamper tests
+        honest: they exercise the format, not a stack of adapters around it.
+      * ServiceDefaults and Persistence both need it. A shared dependency that lives inside one of
+        two peers is how a cycle starts.
+
+    Dependencies point inwards: Crypto -> Domain, never the reverse. Domain still references
+    nothing at all.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\Domain\Domain.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="AWSSDK.KeyManagementService" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Options" />
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" />
+    <PackageReference Include="Microsoft.Extensions.Options.DataAnnotations" />
+  </ItemGroup>
+
+</Project>
