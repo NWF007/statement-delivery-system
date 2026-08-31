@@ -389,8 +389,13 @@ public static class ServiceDefaultsExtensions
                 context.ProblemDetails.Extensions["traceId"] =
                     Activity.Current?.TraceId.ToString() ?? context.HttpContext.TraceIdentifier;
 
+                // A DENIAL NAMES NOTHING IT WAS ASKED ABOUT. The instance keeps the route SHAPE
+                // (an operator greps for it) but every identifier is redacted: the download
+                // token because it IS the credential, and any resource id because a 404 that
+                // echoes the id it denies knowing is an existence oracle - and denial bodies
+                // must stay byte-identical across causes (DownloadLifecycleTests pins this).
                 context.ProblemDetails.Instance ??=
-                    SensitiveDataRedactor.RedactDownloadPath(context.HttpContext.Request.Path.Value);
+                    SensitiveDataRedactor.RedactPathIdentifiers(context.HttpContext.Request.Path.Value);
             });
 
         builder.Services.AddExceptionHandler<GlobalExceptionHandler>();

@@ -3,6 +3,65 @@
 What this system does not yet do, and what has not yet been proven about it. Kept separate from the
 ADRs: an ADR records a decision, this records a gap.
 
+## Deliberate non-goals
+
+Things chosen not to build, each with its reasoning on record:
+
+- **HTTP Range / resumable downloads** — irreconcilable with single-use tokens; the tokens won
+  (ADR-0016).
+- **Automatic orphan deletion** — report-only, permanently: Compliance locks forbid it anyway,
+  and inventory-driven deletion converts a comparison bug into data loss (ADR-0039).
+- **Multi-region active-active** — designed at the 1000× tier in SCALE.md's "where it breaks";
+  not built, and single-region is stated as a limit rather than papered over.
+- **KMS key rotation** — `kek_id` per object and the cohort index mean rotation never rewrites
+  history; the rotation job itself is future work.
+- **An idempotency key on link issue** — re-issue mints a new link on purpose; replaying an old
+  one is the attack, not the feature (ADR-0014).
+
+## Simulated in local development
+
+Honest about what is real and what stands in:
+
+- **Archive tier**: MinIO has no Glacier. Locally nothing moves — the tier flag, the async
+  restore contract, the outbox event and the expiring restored copy are all real; the latency
+  is a configured delay and the in-place storage-class transition is production-only (ADR-0038).
+- **KMS**: `LocalKeyProvider` derives cohort keys from a Development-only secret and refuses to
+  start elsewhere; `AwsKmsKeyProvider` is implemented and has KMS-gated tests, but has never run
+  against real AWS KMS from this project.
+- **Outbox transport**: the transactional outbox, relay, and at-least-once semantics are real;
+  the sink is a structured log until a broker exists (`TODO(transport)` in OutboxRelayService
+  points here).
+- **The core-banking ledger**: a deterministic mock behind a real HTTP boundary, so the
+  resilience pipeline is exercised for real even though the data is synthetic.
+
+## Known limitations
+
+Things the design genuinely cannot do, named precisely, with why they were accepted:
+
+- **A privileged insider can forge a self-consistent audit chain.** Chain heads live in the
+  same database as the events; rewrite both and verification passes. Truncation from the tail
+  is likewise invisible from inside. External anchoring is the fix — `IChainAnchor` is the seam,
+  no-op today (`TODO(security)` at its registration points here). Accepted for now because the
+  chain still defeats application bugs and opportunistic tampering, and the anchor needs an
+  independent trust root that local dev cannot provide (ADR-0010).
+- **Truncation of a stream is detected only at stream end.** Per-frame authentication means a
+  frame-boundary truncation surfaces when the terminal frame is missed, not mid-download. Full
+  protection needs the total length under the AAD of frame one, which is incompatible with
+  streaming writes of unknown length — O(1) memory won (ADR-0019).
+- **The customer CEK tier is protected by database access controls, not an HSM.** The
+  alternative is $26M/month (COST.md, Finding 1). Compensations: CEKs exist only wrapped under
+  KMS-held KEKs, column-scoped grants, and destruction VACUUMs the dead tuples.
+- **Erasure has a bounded read-side propagation window.** No cross-process cache invalidation
+  exists (needs a bus); the write path is closed by the database-side guard, rows go PURGED
+  transactionally (downloads 410 immediately), and the residual is a ≤5-minute decrypt window
+  on gateway replicas with a warm CEK — see "The warm-cache erasure window" below.
+- **The consume scans ~8 future daily token partitions where 2 would do.** A clock-skew
+  correctness argument beat a partition-pruning optimisation; the reasoning is above
+  `ConsumeSql` and the fix needs a shared clock source or a monitored skew budget.
+- **A failed finalize can orphan a Compliance-locked object.** Upload-before-commit is the
+  crash-safe ordering (the inverse loses data instead of money); the orphan sweep reports the
+  residue and SCALE.md prices it (~$0.30/month).
+
 ## Test coverage that has never executed
 
 **As of 2026-08-30, covering commit `41048ce`, the Prompts 1–4 audit remediation, and Prompt 5.**
@@ -175,3 +234,17 @@ other half of reconciliation CHECK 1.
 claim loop stops on its own breaker), but the status flip is performed by the lease-holding
 orchestrator observing its own breaker. A partition that isolates only the orchestrator replica could
 mislabel the run. Accepted, with the reasoning and revisit trigger in ADR-0030.
+
+## Next, in priority order
+
+1. **Execute the Docker-gated 160+ on the measurement host** — `FullRun_1000Accounts` first,
+   then `RetentionLifecycleTests` (the statement-scoped-hold row) and `ComplianceResponseTests`;
+   apply V018–V022 to a real database for the first time. Everything above this line is
+   evidence; below it is code.
+2. **Fill SCALE.md's measured tables** with the `load/` harness and settle the three bottleneck
+   hypotheses.
+3. **A real `IChainAnchor`** — terminal hashes to append-only storage under Object Lock; closes
+   the insider-forgery limitation.
+4. **Audit partition detach/archive** for months older than N — the biggest measured cost lever
+   (COST.md).
+5. **Broker transport for the outbox** — the relay's `TODO(transport)`.

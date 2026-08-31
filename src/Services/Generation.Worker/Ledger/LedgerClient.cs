@@ -96,6 +96,19 @@ public interface ILedgerClient
     /// <exception cref="PoisonLedgerPayloadException">The response did not parse.</exception>
     Task<LedgerStatementDto> GetTransactionsAsync(
         Guid accountId, StatementPeriod period, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Asks the ledger whether it is ALIVE, through the same resilience pipeline the renders
+    /// use, so the answer drives the circuit breaker's state machine.
+    /// </summary>
+    /// <remarks>
+    /// The pause/resume loop depends on this: pausing stops render traffic, and a breaker with
+    /// no traffic never observes the recovery, so a paused run would otherwise stay paused
+    /// forever. Any live answer counts - "no such account" proves the service is up.
+    /// </remarks>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns><see langword="true"/> when the ledger answered; <see langword="false"/> when it is down or the breaker is open.</returns>
+    Task<bool> ProbeAsync(CancellationToken cancellationToken);
 }
 
 /// <summary>HTTP implementation of <see cref="ILedgerClient"/>.</summary>
@@ -150,6 +163,35 @@ public sealed class LedgerClient : ILedgerClient
             throw new PoisonLedgerPayloadException(
                 string.Create(CultureInfo.InvariantCulture, $"Ledger payload for {accountId:D} did not parse."),
                 ex);
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> ProbeAsync(CancellationToken cancellationToken)
+    {
+        // A fixed, never-provisioned account: the expected answer is 404, and 404 IS the good
+        // news - the service answered. Only transport failures, timeouts, 5xx and an open
+        // breaker report the ledger down.
+        var uri = new Uri(
+            string.Create(
+                CultureInfo.InvariantCulture,
+                $"ledger/v1/accounts/{Guid.Empty:D}/transactions?from=2000-01-01&to=2000-01-31"),
+            UriKind.Relative);
+
+        try
+        {
+            using HttpResponseMessage response =
+                await _http.GetAsync(uri, cancellationToken).ConfigureAwait(false);
+
+            return response.StatusCode == HttpStatusCode.NotFound || response.IsSuccessStatusCode;
+        }
+        catch (Exception ex) when (ex is HttpRequestException
+            or TaskCanceledException
+            or Polly.CircuitBreaker.BrokenCircuitException
+            or Polly.Timeout.TimeoutRejectedException
+            or Polly.RateLimiting.RateLimiterRejectedException)
+        {
+            return false;
         }
     }
 }

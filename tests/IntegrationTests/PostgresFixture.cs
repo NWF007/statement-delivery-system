@@ -77,7 +77,8 @@ public sealed class PostgresFixture : IAsyncLifetime
     /// pool would admit - and a connection-pool timeout would look exactly like the lock contention
     /// those tests exist to measure.
     /// </param>
-    public NpgsqlConnectionFactory ConnectionFactoryFor(string role, int maxPoolSize = 5)
+    public NpgsqlConnectionFactory ConnectionFactoryFor(
+        string role, int maxPoolSize = 5, int writeTimeoutSeconds = 30, int connectTimeoutSeconds = 5)
     {
         var options = new PostgresOptions
         {
@@ -85,6 +86,8 @@ public sealed class PostgresFixture : IAsyncLifetime
             ApplicationName = $"integration-tests:{role}",
             MaxPoolSize = maxPoolSize,
             MinPoolSize = 0,
+            WriteCommandTimeoutSeconds = writeTimeoutSeconds,
+            ConnectTimeoutSeconds = connectTimeoutSeconds,
 
             // Auto-prepare off in tests. These connect directly rather than through PgBouncer, and
             // several tests deliberately reuse the same statement text against different roles.
@@ -105,6 +108,13 @@ public sealed class PostgresFixture : IAsyncLifetime
             return;
         }
 
+        // The DateOnly handlers normally register when a host wires Persistence into DI - but a
+        // FILTERED run (the CI concurrency loop runs one test twenty times in its own process)
+        // can reach direct-Dapper seeding before any host exists, and the first DateOnly
+        // parameter throws. The fixture is every integration test's chokepoint, so it registers
+        // them unconditionally.
+        StatementDelivery.Persistence.Dapper.DapperConfiguration.EnsureConfigured();
+
         _container = new PostgreSqlBuilder("postgres:17-alpine")
             .WithDatabase("statements")
             .WithUsername("postgres")
@@ -113,6 +123,13 @@ public sealed class PostgresFixture : IAsyncLifetime
             // Matches the compose stack. Slow queries have to be visible somewhere, and finding out
             // in production that nothing was logging them is the wrong time.
             .WithCommand("-c", "log_min_duration_statement=200")
+
+            // The container has no PgBouncer and InitializeAsync lifts the per-role caps, so the
+            // global ceiling is the only limit left - and the default 100 is not enough for the
+            // claim-contention tests' fifty direct connections running beside other parallel
+            // collections. Production never sees this shape; the pooler holds the fleet to a few
+            // dozen backends (ADR-0008).
+            .WithCommand("-c", "max_connections=300")
             .Build();
 
         await _container.StartAsync().ConfigureAwait(false);
@@ -200,6 +217,30 @@ public sealed class PostgresFixture : IAsyncLifetime
     /// </remarks>
     /// <param name="connectionString">An administrative connection string for the target database.</param>
     private static void Migrate(string connectionString)
+    {
+        MigrateCore(connectionString);
+
+        // V001 caps connections per role (app_generation at 40) so that a service bypassing
+        // PgBouncer fails loudly instead of exhausting backends. These tests ARE that bypass, on
+        // purpose: no pooler in the container, xUnit collections in parallel, and the
+        // claim-contention tests alone open fifty direct connections as one role. The caps stay
+        // in the schema the compose stack and production run under. The uncap lives HERE, after
+        // EVERY migration run, because roles are CLUSTER-wide: building the replica database
+        // re-runs V001 and silently re-capped them mid-suite the moment the replica-lag test
+        // got far enough to build its replica.
+        using var uncapConnection = new NpgsqlConnection(connectionString);
+        uncapConnection.Open();
+        using NpgsqlCommand uncap = uncapConnection.CreateCommand();
+        uncap.CommandText = """
+            ALTER ROLE app_delivery   CONNECTION LIMIT -1;
+            ALTER ROLE app_download   CONNECTION LIMIT -1;
+            ALTER ROLE app_generation CONNECTION LIMIT -1;
+            ALTER ROLE app_retention  CONNECTION LIMIT -1;
+            """;
+        _ = uncap.ExecuteNonQuery();
+    }
+
+    private static void MigrateCore(string connectionString)
     {
         foreach (bool nonTransactional in (bool[])[false, true])
         {

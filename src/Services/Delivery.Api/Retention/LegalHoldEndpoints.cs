@@ -206,7 +206,12 @@ public static class LegalHoldEndpoints
 
     private static async Task<IResult> ReleaseAsync(
         Guid holdId,
-        ReleaseHoldRequest? request,
+
+        // Explicit [FromBody]: minimal APIs refuse an INFERRED body on DELETE at route-building
+        // time, which broke the whole host's endpoint resolution - found by the Prompt 7
+        // endpoint-enumeration test. An explicit attribute is allowed, and the release reason
+        // genuinely belongs in the body.
+        [Microsoft.AspNetCore.Mvc.FromBody] ReleaseHoldRequest? request,
         HttpContext http,
         RetentionSweepRepository statements,
         LegalHoldRepository holds,

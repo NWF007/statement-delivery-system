@@ -53,21 +53,34 @@ public sealed class AuditChainIntegrationTests
         // disagree, every chain fails to verify from record one - and it would look like tampering.
         await using NpgsqlConnection connection = await _postgres.OpenAdminAsync(TestContext.Current.CancellationToken).ConfigureAwait(true);
 
-        List<(short ChainId, byte[] LastHash)> heads =
+        // A head equals its genesis only while the chain is untouched, and sibling tests
+        // legitimately advance chains in the shared database. Either way the seed is still
+        // provable: an unmoved head IS the seed, and a moved chain's first record carries the
+        // seed as its immutable prev_hash.
+        List<(short ChainId, long LastSeq, byte[] LastHash)> heads =
         [
-            .. await connection.QueryAsync<(short, byte[])>(
-                "SELECT chain_id, last_hash FROM audit_chain_head ORDER BY chain_id;").ConfigureAwait(true),
+            .. await connection.QueryAsync<(short, long, byte[])>(
+                "SELECT chain_id, last_seq, last_hash FROM audit_chain_head ORDER BY chain_id;").ConfigureAwait(true),
         ];
 
         heads.Count.ShouldBe(AuditHashing.DefaultChainCount);
 
-        foreach ((short chainId, byte[] lastHash) in heads)
+        foreach ((short chainId, long lastSeq, byte[] lastHash) in heads)
         {
-            lastHash.ShouldBe(AuditHashing.Genesis(chainId), $"chain {chainId} genesis must match the C# definition");
+            byte[] seeded = lastSeq == 0
+                ? lastHash
+                : await connection.QuerySingleAsync<byte[]>(
+                    "SELECT prev_hash FROM audit_event WHERE chain_id = @chainId AND chain_seq = 1;",
+                    new { chainId }).ConfigureAwait(true);
+
+            seeded.ShouldBe(AuditHashing.Genesis(chainId), $"chain {chainId} genesis must match the C# definition");
         }
 
-        // And they must all differ, or a record could be lifted between chains undetected.
-        heads.Select(h => Convert.ToHexStringLower(h.LastHash)).Distinct(StringComparer.Ordinal).Count()
+        // And the definitions must all differ, or a record could be lifted between chains
+        // undetected.
+        Enumerable.Range(0, AuditHashing.DefaultChainCount)
+            .Select(static chain => Convert.ToHexStringLower(AuditHashing.Genesis((short)chain)))
+            .Distinct(StringComparer.Ordinal).Count()
             .ShouldBe(AuditHashing.DefaultChainCount);
     }
 
@@ -82,7 +95,14 @@ public sealed class AuditChainIntegrationTests
         // this, the serialisation is correct.
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
 
-        NpgsqlConnectionFactory factory = _postgres.ConnectionFactoryFor("app_generation", maxPoolSize: 60);
+        // The write timeout is sized to the test's own queue: fifty appends serialise on one
+        // chain head by design, so the last writer legitimately waits for the other forty-nine,
+        // and on a loaded runner that tail exceeds the default thirty seconds.
+        // Connect timeout too: fifty simultaneous TCP-plus-SCRAM handshakes against a container
+        // on a two-core runner queue behind each other, and the tail outlives the default five
+        // seconds even after the bootstrap pre-warm.
+        NpgsqlConnectionFactory factory = _postgres.ConnectionFactoryFor(
+            "app_generation", maxPoolSize: 60, writeTimeoutSeconds: 120, connectTimeoutSeconds: 60);
         await using (factory.ConfigureAwait(false))
         {
             PostgresAuditWriter writer = Writer(factory);
@@ -93,6 +113,15 @@ public sealed class AuditChainIntegrationTests
             short chainId = AuditHashing.AssignChain(statementId, customerId);
 
             long startSeq = await CurrentSeqAsync(chainId, cancellationToken).ConfigureAwait(true);
+
+            // Pre-warm ONE connection before the storm: Npgsql bootstraps its type catalogue on
+            // the data source's first physical open, and fifty first-opens racing that one-time
+            // bootstrap on a loaded runner blow the five-second connect timeout. One quiet open
+            // pays the cost once; production pools warm the same way.
+            await using (NpgsqlConnection warmup =
+                await factory.OpenAsync(ConnectionIntent.Write, cancellationToken).ConfigureAwait(true))
+            {
+            }
 
             using var barrier = new Barrier(ConcurrentWriters);
 
@@ -276,13 +305,23 @@ public sealed class AuditChainIntegrationTests
         // privileges no service holds.
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
 
-        NpgsqlConnectionFactory factory = _postgres.ConnectionFactoryFor("app_generation");
+        // ITS OWN DATABASE, deliberately. This test plants real corruption to prove the chain
+        // detects it - and the moment appends started working for the whole suite, every later
+        // whole-chain verify (the full-lifecycle test, reconciliation's C6) found the planted
+        // tamper and honestly reported the shared trail broken. An attack rehearsal does not
+        // belong in evidence other tests rely on.
+        string generationConnectionString = await _postgres
+            .CreateLaggingReplicaAsync("audit_tamper_db", "app_generation", cancellationToken).ConfigureAwait(true);
+
+        NpgsqlConnectionFactory factory = TamperDbFactory(generationConnectionString, "app_generation");
         await using (factory.ConfigureAwait(false))
         {
             PostgresAuditWriter writer = Writer(factory);
             var statementId = Guid.CreateVersion7();
             short chainId = AuditHashing.AssignChain(statementId, null);
-            long startSeq = await CurrentSeqAsync(chainId, cancellationToken).ConfigureAwait(true);
+
+            // A freshly migrated database: every chain sits at its genesis.
+            const long StartSeq = 0;
 
             for (int i = 0; i < 5; i++)
             {
@@ -295,10 +334,15 @@ public sealed class AuditChainIntegrationTests
                 await transaction.CommitAsync(cancellationToken).ConfigureAwait(true);
             }
 
-            long target = startSeq + 3;
+            long target = StartSeq + 3;
 
-            await using (NpgsqlConnection admin = await _postgres.OpenAdminAsync(cancellationToken).ConfigureAwait(true))
+            var adminToTamperDb = new NpgsqlConnectionStringBuilder(_postgres.AdminConnectionString)
             {
+                Database = "audit_tamper_db",
+            };
+            await using (var admin = new NpgsqlConnection(adminToTamperDb.ConnectionString))
+            {
+                await admin.OpenAsync(cancellationToken).ConfigureAwait(true);
                 _ = await admin.ExecuteAsync(new CommandDefinition(
                     """
                     ALTER TABLE audit_event DISABLE TRIGGER trg_audit_no_update;
@@ -310,13 +354,34 @@ public sealed class AuditChainIntegrationTests
                     cancellationToken: cancellationToken)).ConfigureAwait(true);
             }
 
-            var verifier = new PostgresAuditVerifier(_postgres.ConnectionFactoryFor("app_retention"));
+            var verifier = new PostgresAuditVerifier(TamperDbFactory(generationConnectionString, "app_retention"));
             ChainVerification verification = await verifier
-                .VerifyChainAsync(chainId, 1, startSeq + 5, cancellationToken).ConfigureAwait(true);
+                .VerifyChainAsync(chainId, 1, StartSeq + 5, cancellationToken).ConfigureAwait(true);
 
             verification.Verified.ShouldBeFalse("an altered record must break the chain");
             verification.FirstBrokenSeq.ShouldBe(target, "and the break must be reported at the altered record");
         }
+    }
+
+    /// <summary>Builds a connection factory for a role against the tamper-isolation database.</summary>
+    private static NpgsqlConnectionFactory TamperDbFactory(string connectionString, string role)
+    {
+        var builder = new NpgsqlConnectionStringBuilder(connectionString)
+        {
+            Username = role,
+        };
+
+        return new NpgsqlConnectionFactory(
+            Microsoft.Extensions.Options.Options.Create(new StatementDelivery.Persistence.Connections.PostgresOptions
+            {
+                PrimaryConnectionString = builder.ConnectionString,
+                ApplicationName = $"integration-tests:tamper:{role}",
+                MaxPoolSize = 5,
+                MinPoolSize = 0,
+                MaxAutoPrepare = 0,
+            }),
+            Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<NpgsqlConnectionFactory>.Instance);
     }
 
     private static (Guid StatementA, Guid StatementB) FindStatementsOnDifferentChains()

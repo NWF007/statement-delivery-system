@@ -18,6 +18,89 @@ Design requirements, not measurements.
 | Month-end write burst | 1,400 inserts / sec |
 | Peak delivery reads | ~30 req / sec |
 
+## Capacity model
+
+Assumptions stated so a reader who disagrees with one can still follow the arithmetic:
+
+| Assumption | Value | Source |
+| --- | --- | --- |
+| Customers | 26,000,000 | brief |
+| Statements generated | ~30M/month, one burst window | brief |
+| Generation window | 6 hours target | brief |
+| Statement size | ~200 KB typical PDF; ~1 MB ciphertext envelope ceiling used for sizing | measured locally (renderhash) |
+| Delivery traffic | ~0.5 req/s steady, ~30 req/s peak | brief |
+| Downloads per statement | ≤ 1.2 (most are never downloaded) | domain estimate |
+| Hot-access window | 90 days, then near-zero | domain estimate |
+| Retention | 7 years → ~2.52B live objects at steady state | statute |
+
+Derived: generation must sustain ~1,400 items/s across the fleet in the window; the statement
+table grows ~30M rows/month into monthly partitions; the delivery path is small in absolute
+terms and is engineered for correctness and auditability, not RPS.
+
+## Bottleneck hypotheses — written BEFORE measuring
+
+Predictions first, then the measured comparison lands beside them; being wrong in a documented
+prediction is fine, not predicting is not.
+
+1. **The audit chain heads are the write-path ceiling.** Every issue/redeem appends an audit
+   event, taking `FOR UPDATE` on one of 16 chain-head rows — 16 serialisation points. Prediction:
+   the link-issue ramp knees when `pg_stat_activity` shows `Lock:transactionid`/`tuple` waits
+   concentrated on `audit_chain_head`, well before CPU saturates. The chain count is
+   **configurable** (`Audit:ChainCount`) precisely because this was anticipated — the fix is more
+   chains, and the next constraint after that is PgBouncer's write pool.
+2. **The PgBouncer write pool is the second ceiling.** Transaction pooling multiplexes a small
+   server-side pool; prediction: `SHOW POOLS` reports non-zero `cl_waiting` and rising `avg_wait`
+   on the delivery write pool within one stage of the chain-head knee.
+3. **The 50 ms denial floor dominates the denial path.** Uniform-timing padding caps per-
+   connection denial throughput at ~20/s by construction. Prediction: replayed-link denials show
+   a p50 pinned at ~50 ms regardless of load until connection concurrency saturates — a
+   DIFFERENT shape from the success path, and the difference is the security control working.
+
+## Measured results
+
+> **Provenance: NOT YET MEASURED.** This host cannot run the stack (no Docker —
+> see LIMITATIONS.md); the harness in `load/` is committed and the tables below are filled in on
+> the Docker-capable measurement host, stage by stage, alongside the hypothesis verdicts.
+
+### Delivery path — link issue (`load/01-link-issue.js`)
+
+| Stage (VUs) | RPS | p50 | p95 | p99 | Errors | Notes |
+|---|---|---|---|---|---|---|
+| 50 | | | | | | |
+| 200 | | | | | | |
+| 500 | | | | | | |
+| 1000 | | | | | | |
+| 2000 | | | | | | |
+
+**Bottleneck at the knee:** _to be named from evidence_
+**Evidence:** _pg_stat_activity wait events / SHOW POOLS output, captured per load/README.md_
+**Fix:** _e.g. raise Audit:ChainCount — then re-measure_
+**Next constraint after that fix:** _predicted: PgBouncer write pool (hypothesis 2)_
+
+### Redemption incl. denial split (`load/02-redemption.js`)
+
+| Stage (VUs) | Redeem RPS | redeem p99 | denial p50 | denial p99 | Errors |
+|---|---|---|---|---|---|
+| 50 | | | | | |
+| 200 | | | | | |
+| 500 | | | | | |
+
+### Catalogue browse (`load/03-catalogue-browse.js`) and mixed (`load/04`)
+
+| Scenario | Stage | RPS | p95 | p99 | Errors |
+|---|---|---|---|---|---|
+| browse | | | | | |
+| mixed 70/25/5 | | | | | |
+
+### Generation throughput (`load/05-generation.js`, B7)
+
+| Metric | Value |
+|---|---|
+| Items/s sustained (per worker) | |
+| Stage split ledger / render / encrypt+upload / finalize | |
+| Peak worker RSS | |
+| Workers needed for 30M in 6h = 30,000,000 / (rate × 21,600) | |
+
 ## Seeding a representative dataset
 
 ```bash
@@ -46,39 +129,10 @@ original.*
 
 ## Partition pruning proof
 
-*The `EXPLAIN (ANALYZE, BUFFERS)` output for the customer list query goes here verbatim. It must
-show the plan touching only the partitions covered by the date range.*
-
-The query under test is the hot path — "my statements, newest first":
-
-```sql
-EXPLAIN (ANALYZE, BUFFERS)
-SELECT id, account_id, customer_id, period_start, period_end, version, status,
-       storage_key, storage_tier, size_bytes, retain_until, generated_at, purged_at
-  FROM statement
- WHERE customer_id = '<pick one>'
-   AND status = 'AVAILABLE'
-   AND period_start >= '2026-01-01'
-   AND period_start <  '2026-09-01'
- ORDER BY period_start DESC, id DESC
- LIMIT 51;
-```
-
-Three things the plan must show:
-
-1. **Only eight monthly partitions scanned**, not all of them. That is the whole point of the
-   mandatory date range — see [ADR-0013](adr/0013-mandatory-date-range-on-statement-queries.md).
-2. **`idx_statement_customer_period` used**, not a sequential scan.
-3. **No `Sort` node.** The index is `(customer_id, period_start DESC, id DESC)`, which matches the
-   `ORDER BY` exactly. A `Sort` in the plan means the index and the sort have drifted apart.
-
-```text
-pending -- paste EXPLAIN (ANALYZE, BUFFERS) output here
-```
-
-*`IntegrationTests.StatementQueryIntegrationTests.WithDateRange_PrunesPartitions` asserts the
-bounded query touches strictly fewer partitions than the unbounded one, and writes the plan to the
-test trace output, so this block can be pasted rather than retyped.*
+Superseded in place: the exact commands and acceptance criteria now live in
+[Query plans](#query-plans) below, updated for V019's widened list index
+(`idx_statement_customer_period_visible`, three visible statuses) — the earlier draft here
+referenced the pre-Prompt-6 index and single-status filter.
 
 ## Index sizes at seeded volume
 
@@ -94,15 +148,37 @@ test trace output, so this block can be pasted rather than retyped.*
 
 *Paste PgBouncer `SHOW POOLS` output under load, then the per-service arithmetic: pool size x instances, summed, against server `max_connections`.*
 
-## Load test results
+## Query plans
 
-*Fill from the k6 summary output. Name the script, the target environment, and the run duration alongside the table.*
+> **Provenance: NOT YET CAPTURED** — same Docker constraint. The commands are exact; run them on
+> the measurement host against the 100k-customer seed and paste the plans beneath each. The
+> acceptance bar: the list shows **partition pruning** (`Subplans Removed` / only the bounded
+> months scanned), the token lookup shows an **Index Scan** on `idx_token_hash`, the sweep uses
+> `idx_statement_retain_until`. A `Seq Scan` on a 2.4M-row table is a stop-reading defect.
 
-| Scenario | VUs | RPS | p50 | p95 | p99 | Error rate |
-| --- | --- | --- | --- | --- | --- | --- |
-|  |  |  |  |  |  |  |
+```bash
+docker compose exec -T postgres psql -U postgres -d statements <<'SQL'
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT id, account_id, customer_id, period_start, period_end, version, status
+  FROM statement
+ WHERE customer_id = (SELECT id FROM customer LIMIT 1)
+   AND status IN ('AVAILABLE','ARCHIVED','PURGED')
+   AND period_start >= '2025-06-01' AND period_start < '2025-09-01'
+ ORDER BY period_start DESC, id DESC LIMIT 20;
 
-*Bottleneck identified: name the component, the metric that saturated first, and the evidence for it.*
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT id, statement_id FROM download_token
+ WHERE token_hash = decode(md5('probe'), 'hex') AND issued_at >= now() - interval '2 days';
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT id, period_start, customer_id, status, storage_key, retain_until
+  FROM statement
+ WHERE retain_until < current_date AND status IN ('AVAILABLE','ARCHIVED')
+ ORDER BY retain_until LIMIT 10000;
+SQL
+```
+
+_Plans land here._
 
 ## Orphaned-object exposure
 
@@ -122,6 +198,24 @@ objects. Production replaces the walk with **S3 Inventory**: a daily manifest di
 against the statement table, with the same classification (referenced / tombstoned / orphan)
 and the same report-only rule. The walk stays in the codebase for local development, resumable
 at any prefix via its persisted cursor.
+
+## Where it breaks
+
+| Tier | What breaks first | Why | What I would change |
+|---|---|---|---|
+| 1× (26M customers) | Nothing structural — the design point | — | Measure, then tune chain count and pool sizes to the tables above |
+| 10× | The monthly generation window | 14,000 items/s needs ~10× workers; the claim queue's SKIP LOCKED contention and PgBouncer's generation pool become the fight | Shard the claim queue by run partition; dedicate a pooler tier to the fleet |
+| 100× | Single-writer PostgreSQL for the statement catalogue | 3B rows/month of inserts exceeds one primary's write bandwidth regardless of partitioning | Shard the CATALOGUE by customer hash (the storage layer already shards); ADR-0005's partition-not-shard decision is explicitly revisited here |
+| 1000× | The single-region, single-database audit chain model | 16 chains × any count still funnels one region | Regional chains with periodic cross-anchoring; the IChainAnchor seam becomes load-bearing rather than optional |
+
+## Bounded by design
+
+The mandatory date range on every statement list (ADR-0013) is what makes the read path flat at
+any scale: a query that cannot name its months cannot be written, so every plan prunes to a
+handful of monthly partitions no matter how many years accumulate. The same shape governs the
+purge (`retain_until` partial index, bounded batches), the orphan sweep (4,096 resumable shard
+prefixes, never a bucket walk), and reconciliation (bounded samples). Unbounded work is not
+slow here; it is unrepresentable.
 
 ## Known limits and next measurements
 

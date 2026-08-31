@@ -110,6 +110,18 @@ public static class RenderStreamBridge
             {
                 await renderTask.WaitAsync(RenderDrainTimeout, CancellationToken.None).ConfigureAwait(false);
             }
+            catch (TimeoutException)
+            {
+                // The drain gave up on a wedged renderer, which means renderTask is being
+                // ABANDONED still running. Observe its eventual fault explicitly: an abandoned
+                // task's unobserved exception escalates at finalisation under test runners (it
+                // crashed the CI unit job) and is noise-with-consequences anywhere else.
+                _ = renderTask.ContinueWith(
+                    static t => _ = t.Exception,
+                    CancellationToken.None,
+                    TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default);
+            }
             catch (Exception)
             {
                 // Swallowed by design; see above.
@@ -138,10 +150,24 @@ public static class RenderStreamBridge
         long start = time.GetTimestamp();
         try
         {
-            Stream output = writer.AsStream();
+            // ⚠ THE GUARD IS LOAD-BEARING. QuestPDF writes through a NATIVE Skia callback
+            // (SkWriteStream -> our Stream.Write), and an exception thrown there unwinds through
+            // native frames with no managed handler on that thread - a process-level crash, not
+            // a failed test. CI's first Linux run proved it: when the failure path completes the
+            // reader with the storage exception, the renderer's very next Write inside the
+            // callback rethrew it into Skia and killed the whole test host (155/155 tests green,
+            // exit code 7). The guard records the first fault, turns every subsequent write into
+            // a quiet no-op so the native render runs to completion against a dead sink, and the
+            // fault is rethrown HERE - on a managed frame - once the callback stack is gone.
+            Stream output = new NativeCallbackSafeStream(writer.AsStream());
             await using (output.ConfigureAwait(false))
             {
                 await renderer.RenderAsync(document, output, cancellationToken).ConfigureAwait(false);
+
+                if (((NativeCallbackSafeStream)output).Fault is { } fault)
+                {
+                    throw fault;
+                }
             }
 
             await writer.CompleteAsync().ConfigureAwait(false);
@@ -156,6 +182,149 @@ public static class RenderStreamBridge
         finally
         {
             onRenderSeconds?.Invoke(time.GetElapsedTime(start).TotalSeconds);
+        }
+    }
+
+    /// <summary>
+    /// A write-through stream that never lets an exception escape into a native caller.
+    /// </summary>
+    /// <remarks>
+    /// The first failure is captured in <see cref="Fault"/> and every later operation becomes a
+    /// no-op, so a native rendering callback (QuestPDF's Skia) can finish its walk against a
+    /// dead sink instead of unwinding managed exceptions through native frames - which crashes
+    /// the process. The owner rethrows <see cref="Fault"/> from a managed frame afterwards.
+    /// </remarks>
+    private sealed class NativeCallbackSafeStream : Stream
+    {
+        private readonly Stream _inner;
+
+        public NativeCallbackSafeStream(Stream inner) => _inner = inner;
+
+        /// <summary>Gets the first exception the sink produced, if any.</summary>
+        public Exception? Fault { get; private set; }
+
+        public override bool CanRead => false;
+
+        public override bool CanSeek => false;
+
+        public override bool CanWrite => true;
+
+        public override long Length => throw new NotSupportedException();
+
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override void Write(byte[] buffer, int offset, int count) =>
+            Guard(() => _inner.Write(buffer, offset, count));
+
+        public override void Write(ReadOnlySpan<byte> buffer)
+        {
+            if (Fault is not null)
+            {
+                return;
+            }
+
+            try
+            {
+                _inner.Write(buffer);
+            }
+            catch (Exception ex)
+            {
+                Fault = ex;
+            }
+        }
+
+        public override async Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+        {
+            if (Fault is not null)
+            {
+                return;
+            }
+
+            try
+            {
+                await _inner.WriteAsync(buffer.AsMemory(offset, count), cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                Fault = ex;
+            }
+        }
+
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (Fault is not null)
+            {
+                return;
+            }
+
+            try
+            {
+                await _inner.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                Fault = ex;
+            }
+        }
+
+        public override void Flush() => Guard(_inner.Flush);
+
+        public override Task FlushAsync(CancellationToken cancellationToken) =>
+            Fault is not null ? Task.CompletedTask : GuardAsync(() => _inner.FlushAsync(cancellationToken));
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                Guard(_inner.Dispose);
+            }
+
+            base.Dispose(disposing);
+        }
+
+        public override async ValueTask DisposeAsync()
+        {
+            await GuardAsync(() => _inner.DisposeAsync().AsTask()).ConfigureAwait(false);
+            await base.DisposeAsync().ConfigureAwait(false);
+        }
+
+        private void Guard(Action write)
+        {
+            if (Fault is not null)
+            {
+                return;
+            }
+
+            try
+            {
+                write();
+            }
+            catch (Exception ex)
+            {
+                Fault = ex;
+            }
+        }
+
+        private async Task GuardAsync(Func<Task> write)
+        {
+            try
+            {
+                await write().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                Fault ??= ex;
+            }
         }
     }
 }

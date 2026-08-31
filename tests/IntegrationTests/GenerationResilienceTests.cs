@@ -66,7 +66,11 @@ public sealed class GenerationResilienceTests
             customMessage: "last_error carries the exception TYPE so an operator reads 'fix the data', not 'wait it out'");
 
         // And the run itself COMPLETED - quarantine is bookkeeping, not failure.
-        (await repo.FindAsync(run.Id, ct).ConfigureAwait(true))!.Status.ShouldBe(RunStatus.Completed);
+        // The status flip is the ORCHESTRATOR's monitor tick, up to one interval after the
+        // counters go terminal - asserting immediately races it.
+        await WaitUntilAsync(
+            async () => (await repo.FindAsync(run.Id, ct).ConfigureAwait(true))!.Status == RunStatus.Completed,
+            TimeSpan.FromSeconds(30), "the run never transitioned to COMPLETED after its items finished", ct).ConfigureAwait(true);
 
         // Retry is the operator's deliberate act: reset, heal the ledger, and the item completes.
         ledger.SetFaults(); // poison list emptied
@@ -129,7 +133,11 @@ public sealed class GenerationResilienceTests
             .ConfigureAwait(true);
         final.Done.ShouldBe(40);
         final.FailedFinal.ShouldBe(0);
-        (await repo.FindAsync(run.Id, ct).ConfigureAwait(true))!.Status.ShouldBe(RunStatus.Completed);
+        // The status flip is the ORCHESTRATOR's monitor tick, up to one interval after the
+        // counters go terminal - asserting immediately races it.
+        await WaitUntilAsync(
+            async () => (await repo.FindAsync(run.Id, ct).ConfigureAwait(true))!.Status == RunStatus.Completed,
+            TimeSpan.FromSeconds(30), "the run never transitioned to COMPLETED after its items finished", ct).ConfigureAwait(true);
     }
 
     [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]
@@ -193,8 +201,11 @@ public sealed class GenerationResilienceTests
             new System.Net.Http.Headers.AuthenticationHeaderValue(
                 "Bearer", DeliveryApiFactory.TokenFor(seeded.CustomerId));
 
+        // Bracket the seeded period: the from/to range is REQUIRED and capped at 84 months by
+        // the API contract, and the old fixed 2020-2030 span was both 120 months wide and
+        // nowhere near the seeder's deliberately-historical periods.
         var listUri = new Uri(
-            $"/v1/customers/{seeded.CustomerId}/statements?from=2020-01-01&to=2030-01-01&limit=10",
+            $"/v1/customers/{seeded.CustomerId}/statements?from={seeded.Period.AddMonths(-1):yyyy-MM-dd}&to={seeded.Period.AddMonths(2):yyyy-MM-dd}&limit=10",
             UriKind.Relative);
 
         // Warm-up so the measurement is the database path, not host startup.
@@ -315,6 +326,15 @@ internal static class GenerationSeed
 
         await using (NpgsqlConnection connection = await postgres.OpenAdminAsync(ct).ConfigureAwait(false))
         {
+            // The isolation anchor lives decades before any provisioned partition, and a render
+            // for an unprovisioned month dies at the INSERT ("no partition of relation
+            // statement found"). Historical backfill provisions its partitions first in
+            // production too; the V003 helper is that procedure.
+            _ = await connection.ExecuteAsync(new CommandDefinition(
+                "SELECT ensure_range_partitions('statement'::regclass, 'month', 3, @from);",
+                new { @from = new DateTimeOffset(period.Start.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero) },
+                commandTimeout: 60, cancellationToken: ct)).ConfigureAwait(false);
+
             _ = await connection.ExecuteAsync(new CommandDefinition(
                 """
                 INSERT INTO customer (id, external_ref, status) VALUES (@customer, @ref, 'ACTIVE');

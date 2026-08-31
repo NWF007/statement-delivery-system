@@ -158,11 +158,13 @@ public sealed class RestoreRequestRepository
         await using NpgsqlConnection connection =
             await _connections.OpenAsync(ConnectionIntent.ReadStrong, cancellationToken).ConfigureAwait(false);
 
-        return await connection.QuerySingleOrDefaultAsync<RestoreRequestRow>(new CommandDefinition(
+        Row? row = await connection.QuerySingleOrDefaultAsync<Row>(new CommandDefinition(
             FindSql,
             new { id = restoreId, statementId = statementId.Value },
             commandTimeout: _connections.CommandTimeoutSeconds(ConnectionIntent.ReadStrong),
             cancellationToken: cancellationToken)).ConfigureAwait(false);
+
+        return row?.ToRecord();
     }
 
     /// <summary>Finds an unexpired completed restore for a statement, or null.</summary>
@@ -176,11 +178,13 @@ public sealed class RestoreRequestRepository
         await using NpgsqlConnection connection =
             await _connections.OpenAsync(ConnectionIntent.ReadStrong, cancellationToken).ConfigureAwait(false);
 
-        return await connection.QuerySingleOrDefaultAsync<RestoreRequestRow>(new CommandDefinition(
+        Row? row = await connection.QuerySingleOrDefaultAsync<Row>(new CommandDefinition(
             LiveForStatementSql,
             new { statementId = statementId.Value },
             commandTimeout: _connections.CommandTimeoutSeconds(ConnectionIntent.ReadStrong),
             cancellationToken: cancellationToken)).ConfigureAwait(false);
+
+        return row?.ToRecord();
     }
 
     /// <summary>Finds a still-pending restore for a statement, so repeat requests reuse it.</summary>
@@ -192,11 +196,13 @@ public sealed class RestoreRequestRepository
         await using NpgsqlConnection connection =
             await _connections.OpenAsync(ConnectionIntent.ReadStrong, cancellationToken).ConfigureAwait(false);
 
-        return await connection.QuerySingleOrDefaultAsync<RestoreRequestRow>(new CommandDefinition(
+        Row? row = await connection.QuerySingleOrDefaultAsync<Row>(new CommandDefinition(
             PendingForStatementSql,
             new { statementId = statementId.Value },
             commandTimeout: _connections.CommandTimeoutSeconds(ConnectionIntent.ReadStrong),
             cancellationToken: cancellationToken)).ConfigureAwait(false);
+
+        return row?.ToRecord();
     }
 
     /// <summary>The completion job's work list.</summary>
@@ -208,13 +214,13 @@ public sealed class RestoreRequestRepository
         await using NpgsqlConnection connection =
             await _connections.OpenAsync(ConnectionIntent.ReadStrong, cancellationToken).ConfigureAwait(false);
 
-        IEnumerable<RestoreRequestRow> rows = await connection.QueryAsync<RestoreRequestRow>(new CommandDefinition(
+        IEnumerable<Row> rows = await connection.QueryAsync<Row>(new CommandDefinition(
             DueSql,
             new { limit },
             commandTimeout: _connections.CommandTimeoutSeconds(ConnectionIntent.ReadStrong),
             cancellationToken: cancellationToken)).ConfigureAwait(false);
 
-        return [.. rows];
+        return [.. rows.Select(static r => r.ToRecord())];
     }
 
     /// <summary>Marks a restore AVAILABLE, in the caller's transaction (audit and outbox join it).</summary>
@@ -236,5 +242,41 @@ public sealed class RestoreRequestRepository
             cancellationToken: cancellationToken)).ConfigureAwait(false);
 
         return updated == 1;
+    }
+    /// <summary>
+    /// Dapper-facing shape: the public record's positional constructor takes DateTimeOffset and
+    /// Dapper materialising timestamptz hands the constructor-matcher a DateTime, so no
+    /// signature matches (see ErasureRepository.RequestRow). Init properties in DateTime,
+    /// converted at the edge.
+    /// </summary>
+    private sealed record Row
+    {
+        public Guid Id { get; init; }
+
+        public Guid StatementId { get; init; }
+
+        public DateOnly PeriodStart { get; init; }
+
+        public Guid CustomerId { get; init; }
+
+        public string RequestedBy { get; init; } = string.Empty;
+
+        public DateTime RequestedAt { get; init; }
+
+        public DateTime DueAt { get; init; }
+
+        public string Status { get; init; } = string.Empty;
+
+        public DateTime? AvailableAt { get; init; }
+
+        public DateTime? ExpiresAt { get; init; }
+
+        public RestoreRequestRow ToRecord() => new(
+            Id, StatementId, PeriodStart, CustomerId, RequestedBy,
+            new DateTimeOffset(RequestedAt, TimeSpan.Zero),
+            new DateTimeOffset(DueAt, TimeSpan.Zero),
+            Status,
+            AvailableAt is { } availableAt ? new DateTimeOffset(availableAt, TimeSpan.Zero) : null,
+            ExpiresAt is { } expiresAt ? new DateTimeOffset(expiresAt, TimeSpan.Zero) : null);
     }
 }

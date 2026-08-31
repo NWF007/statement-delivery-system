@@ -44,7 +44,7 @@ public sealed class LegalHoldRepository
         UPDATE legal_hold
            SET released_at = now(), released_by = @releasedBy, release_reason = @releaseReason
          WHERE id = @id AND released_at IS NULL
-        RETURNING statement_id, customer_id, case_reference;
+        RETURNING statement_id AS StatementId, customer_id AS CustomerId, case_reference AS CaseReference;
         """;
 
     private const string FindSql = """
@@ -175,11 +175,13 @@ public sealed class LegalHoldRepository
         await using NpgsqlConnection connection =
             await _connections.OpenAsync(ConnectionIntent.ReadStrong, cancellationToken).ConfigureAwait(false);
 
-        return await connection.QuerySingleOrDefaultAsync<LegalHoldRow>(new CommandDefinition(
+        HoldRow? row = await connection.QuerySingleOrDefaultAsync<HoldRow>(new CommandDefinition(
             FindSql,
             new { id = holdId },
             commandTimeout: _connections.CommandTimeoutSeconds(ConnectionIntent.ReadStrong),
             cancellationToken: cancellationToken)).ConfigureAwait(false);
+
+        return row?.ToRecord();
     }
 
     /// <summary>Finds the case reference of an active hold covering a statement, or null.</summary>
@@ -233,12 +235,41 @@ public sealed class LegalHoldRepository
         await using NpgsqlConnection connection =
             await _connections.OpenAsync(ConnectionIntent.ReadEventual, cancellationToken).ConfigureAwait(false);
 
-        IEnumerable<LegalHoldRow> rows = await connection.QueryAsync<LegalHoldRow>(new CommandDefinition(
+        IEnumerable<HoldRow> rows = await connection.QueryAsync<HoldRow>(new CommandDefinition(
             ListSql,
             new { activeOnly, afterPlacedAt, afterId, limit },
             commandTimeout: _connections.CommandTimeoutSeconds(ConnectionIntent.ReadEventual),
             cancellationToken: cancellationToken)).ConfigureAwait(false);
 
-        return [.. rows];
+        return [.. rows.Select(static r => r.ToRecord())];
+    }
+    /// <summary>
+    /// Dapper-facing shape: the public record's positional constructor takes DateTimeOffset and
+    /// Dapper materialising timestamptz hands the constructor-matcher a DateTime, so no
+    /// signature matches (see ErasureRepository.RequestRow). Init properties in DateTime,
+    /// converted at the edge.
+    /// </summary>
+    private sealed record HoldRow
+    {
+        public Guid Id { get; init; }
+
+        public Guid? StatementId { get; init; }
+
+        public Guid? CustomerId { get; init; }
+
+        public string CaseReference { get; init; } = string.Empty;
+
+        public string? Reason { get; init; }
+
+        public string PlacedBy { get; init; } = string.Empty;
+
+        public DateTime PlacedAt { get; init; }
+
+        public DateTime? ReleasedAt { get; init; }
+
+        public LegalHoldRow ToRecord() => new(
+            Id, StatementId, CustomerId, CaseReference, Reason, PlacedBy,
+            new DateTimeOffset(PlacedAt, TimeSpan.Zero),
+            ReleasedAt is { } releasedAt ? new DateTimeOffset(releasedAt, TimeSpan.Zero) : null);
     }
 }

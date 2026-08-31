@@ -158,10 +158,13 @@ public static class AuditHashing
             entry.SourceIp ?? string.Empty,
             entry.UserAgentHash ?? string.Empty,
 
-            // Round-trip "O" in UTC. A local-time stamp would hash differently on two servers in
-            // different zones for the same instant, and the chain would fail to verify for a reason
-            // that looks like tampering.
-            entry.OccurredAt.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture),
+            // Round-trip "O" in UTC, TRUNCATED TO MICROSECONDS. Two rules, each learned the hard
+            // way. UTC: a local-time stamp hashes differently on two servers in different zones for
+            // the same instant. Microseconds: .NET carries 100 ns ticks but timestamptz stores
+            // microseconds, so hashing full tick precision meant the verifier - which rebuilds the
+            // entry from the STORED value - recomputed a different canonical string for roughly
+            // nine records in ten. The chain must hash what the evidence can actually retain.
+            TruncateToMicroseconds(entry.OccurredAt.ToUniversalTime()).ToString("O", CultureInfo.InvariantCulture),
             CanonicalJson(entry.Context),
         ];
 
@@ -177,6 +180,19 @@ public static class AuditHashing
 
         return string.Join(FieldDelimiter, fields);
     }
+
+    /// <summary>
+    /// Truncates to microseconds - the precision the canonical form commits to.
+    /// </summary>
+    /// <remarks>
+    /// Public because the WRITER must persist exactly this value: PostgreSQL ROUNDS sub-microsecond
+    /// input while the canonical form truncates, so inserting the raw tick value would store a
+    /// timestamp one microsecond above the one that was hashed for half of the odd-tick cases.
+    /// </remarks>
+    /// <param name="value">The timestamp.</param>
+    /// <returns>The value with sub-microsecond ticks removed.</returns>
+    public static DateTimeOffset TruncateToMicroseconds(DateTimeOffset value) =>
+        value.AddTicks(-(value.Ticks % (TimeSpan.TicksPerMillisecond / 1000)));
 
     /// <summary>
     /// Computes a record's hash: <c>SHA256(previousHash || UTF8(canonical))</c>.

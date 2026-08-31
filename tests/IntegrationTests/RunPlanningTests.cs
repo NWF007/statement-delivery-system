@@ -131,9 +131,13 @@ public sealed class RunPlanningTests
             NpgsqlConnectionFactory b = _postgres.ConnectionFactoryFor("app_generation");
             await using (b.ConfigureAwait(false))
             {
-                var options = Options.Create(new LeaseOptions { TimeToLiveSeconds = 15 });
-                var replicaA = new PostgresLeaseManager(a, options, NullLoggerFactory.Instance);
-                var replicaB = new PostgresLeaseManager(b, options, NullLoggerFactory.Instance);
+                // Distinct holder ids: both managers live in this one test process, and the
+                // default identity is per-process - identical ids make the second acquire a
+                // legitimate same-holder renewal, which is not what this test is about.
+                var replicaA = new PostgresLeaseManager(
+                    a, Options.Create(new LeaseOptions { TimeToLiveSeconds = 15, HolderId = "replica-a" }), NullLoggerFactory.Instance);
+                var replicaB = new PostgresLeaseManager(
+                    b, Options.Create(new LeaseOptions { TimeToLiveSeconds = 15, HolderId = "replica-b" }), NullLoggerFactory.Instance);
 
                 ILeaseHandle? first = await replicaA.TryAcquireAsync("generation-orchestrator-test", ct).ConfigureAwait(true);
                 ILeaseHandle? second = await replicaB.TryAcquireAsync("generation-orchestrator-test", ct).ConfigureAwait(true);

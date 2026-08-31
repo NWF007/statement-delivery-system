@@ -213,11 +213,13 @@ public sealed class ErasureRepository
         await using NpgsqlConnection connection =
             await _connections.OpenAsync(ConnectionIntent.ReadStrong, cancellationToken).ConfigureAwait(false);
 
-        return await connection.QuerySingleOrDefaultAsync<CustomerKeyState>(new CommandDefinition(
+        KeyStateRow? row = await connection.QuerySingleOrDefaultAsync<KeyStateRow>(new CommandDefinition(
             KeyStateSql,
             new { customerId = customerId.Value },
             commandTimeout: _connections.CommandTimeoutSeconds(ConnectionIntent.ReadStrong),
             cancellationToken: cancellationToken)).ConfigureAwait(false);
+
+        return row?.ToRecord();
     }
 
     /// <summary>Finds a customer's live (scheduled) request, or null.</summary>
@@ -229,11 +231,13 @@ public sealed class ErasureRepository
         await using NpgsqlConnection connection =
             await _connections.OpenAsync(ConnectionIntent.ReadStrong, cancellationToken).ConfigureAwait(false);
 
-        return await connection.QuerySingleOrDefaultAsync<ErasureRequestRow>(new CommandDefinition(
+        RequestRow? row = await connection.QuerySingleOrDefaultAsync<RequestRow>(new CommandDefinition(
             FindActiveSql,
             new { customerId = customerId.Value },
             commandTimeout: _connections.CommandTimeoutSeconds(ConnectionIntent.ReadStrong),
             cancellationToken: cancellationToken)).ConfigureAwait(false);
+
+        return row?.ToRecord();
     }
 
     /// <summary>The executor's work list: scheduled requests whose cooling-off has elapsed.</summary>
@@ -245,13 +249,13 @@ public sealed class ErasureRepository
         await using NpgsqlConnection connection =
             await _connections.OpenAsync(ConnectionIntent.ReadStrong, cancellationToken).ConfigureAwait(false);
 
-        IEnumerable<ErasureRequestRow> rows = await connection.QueryAsync<ErasureRequestRow>(new CommandDefinition(
+        IEnumerable<RequestRow> rows = await connection.QueryAsync<RequestRow>(new CommandDefinition(
             DueSql,
             new { limit },
             commandTimeout: _connections.CommandTimeoutSeconds(ConnectionIntent.ReadStrong),
             cancellationToken: cancellationToken)).ConfigureAwait(false);
 
-        return [.. rows];
+        return [.. rows.Select(static r => r.ToRecord())];
     }
 
     /// <summary>Records the blocking reason and timestamp, in the caller's transaction.</summary>
@@ -288,5 +292,53 @@ public sealed class ErasureRepository
             transaction,
             commandTimeout: _connections.CommandTimeoutSeconds(ConnectionIntent.Write),
             cancellationToken: cancellationToken)).ConfigureAwait(false);
+    }
+    /// <summary>
+    /// Dapper-facing shape for <see cref="ErasureRequestRow"/>. The public record's positional
+    /// constructor takes DateTimeOffset, and Dapper materialising from timestamptz hands the
+    /// constructor-matcher a DateTime - no signature matches and the query throws. Init
+    /// properties in DateTime, converted at the edge, is the idiom every row in this codebase
+    /// that Dapper touches follows (see StatementRunRepository.RunRow).
+    /// </summary>
+    private sealed record RequestRow
+    {
+        public Guid Id { get; init; }
+
+        public Guid CustomerId { get; init; }
+
+        public string Reason { get; init; } = string.Empty;
+
+        public string RequestReference { get; init; } = string.Empty;
+
+        public string RequestedBy { get; init; } = string.Empty;
+
+        public DateTime RequestedAt { get; init; }
+
+        public DateTime DueAt { get; init; }
+
+        public string Status { get; init; } = string.Empty;
+
+        public string? LastBlockedReason { get; init; }
+
+        public DateTime? LastBlockedAt { get; init; }
+
+        public ErasureRequestRow ToRecord() => new(
+            Id, CustomerId, Reason, RequestReference, RequestedBy,
+            new DateTimeOffset(RequestedAt, TimeSpan.Zero),
+            new DateTimeOffset(DueAt, TimeSpan.Zero),
+            Status,
+            LastBlockedReason,
+            LastBlockedAt is { } blockedAt ? new DateTimeOffset(blockedAt, TimeSpan.Zero) : null);
+    }
+
+    /// <summary>Dapper-facing shape for <see cref="CustomerKeyState"/>; same reason as <see cref="RequestRow"/>.</summary>
+    private sealed record KeyStateRow
+    {
+        public string Status { get; init; } = string.Empty;
+
+        public DateTime? DestroyedAt { get; init; }
+
+        public CustomerKeyState ToRecord() => new(
+            Status, DestroyedAt is { } destroyedAt ? new DateTimeOffset(destroyedAt, TimeSpan.Zero) : null);
     }
 }

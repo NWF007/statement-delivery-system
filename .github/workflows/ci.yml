@@ -156,7 +156,11 @@ jobs:
   # -------------------------------------------------------------------------------------------
   integration:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+
+    # Sized for BOTH steps actually running: the full suite takes ~17 minutes and the
+    # twenty-iteration concurrency loop boots fresh containers every iteration (~15 more).
+    # 25 minutes was calibrated while earlier failures kept the loop from ever starting.
+    timeout-minutes: 45
     needs: build
     steps:
       - uses: actions/checkout@v4

@@ -122,6 +122,140 @@ public sealed partial class QueryDisciplineTests
     }
 
     [Fact]
+    public void EveryMappedColumn_CarriesAPascalCaseAlias()
+    {
+        // Dapper maps columns to properties BY NAME, and nothing in this codebase enables
+        // underscore matching - so a snake_case column in a multi-column select list maps to no
+        // property at all, and an init-only record swallows it as a DEFAULT VALUE rather than an
+        // error. The first real execution proved how quiet that failure is: audit appends read
+        // last_seq/last_hash into nothing and wrote seq=1 with an empty prev_hash (caught only by
+        // ck_audit_hash_length), run rows surfaced 0001-01-01 periods, and the outbox relay
+        // published every event with an empty type. A snake_case ALIAS is the same bug wearing a
+        // disguise (AS was_consumed still matches nothing), so both are forbidden. Single-column
+        // lists are exempt: they feed scalar reads, where the column name is irrelevant.
+        var offenders = new List<string>();
+
+        foreach ((string path, string sql) in DapperSqlLiterals())
+        {
+            foreach (string list in ColumnLists(sql))
+            {
+                List<string> columns = SplitTopLevel(list);
+                if (columns.Count < 2)
+                {
+                    continue;
+                }
+
+                foreach (string column in columns)
+                {
+                    Match alias = TrailingAlias().Match(column);
+                    if (alias.Success)
+                    {
+                        if (alias.Groups[1].Value.Contains('_', StringComparison.Ordinal))
+                        {
+                            offenders.Add($"{path}: snake_case alias in {Compact(column)}");
+                        }
+
+                        continue;
+                    }
+
+                    string bare = column[(column.LastIndexOf('.') + 1)..].Trim();
+                    if (BareSnakeColumn().IsMatch(bare))
+                    {
+                        offenders.Add($"{path}: unaliased column {Compact(column)}");
+                    }
+                }
+            }
+        }
+
+        offenders.ShouldBeEmpty(
+            "every snake_case column in a multi-column SELECT or RETURNING list must carry a PascalCase AS alias matching its target property");
+    }
+
+    /// <summary>
+    /// Raw-string SQL literals from C# sources under <c>src/</c> - the ones Dapper maps. Migration
+    /// scripts and test SQL are out of scope: scripts never map to C#, and tests read tuples,
+    /// which map positionally.
+    /// </summary>
+    private static IEnumerable<(string Path, string Sql)> DapperSqlLiterals()
+    {
+        string root = Path.Combine(SolutionGraph.RepositoryRoot, "src");
+        string bin = string.Concat(Path.DirectorySeparatorChar, "bin", Path.DirectorySeparatorChar);
+        string obj = string.Concat(Path.DirectorySeparatorChar, "obj", Path.DirectorySeparatorChar);
+
+        foreach (string path in Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories)
+                     .Where(p => !p.Contains(bin, StringComparison.Ordinal))
+                     .Where(p => !p.Contains(obj, StringComparison.Ordinal))
+                     .OrderBy(p => p, StringComparer.Ordinal))
+        {
+            string text = File.ReadAllText(path);
+
+            // Interpolated fragments hid the fifth instance of the mapping bug: a shared
+            // `Columns` fragment carried the unaliased list, and the literal that had the
+            // SELECT..FROM shape only showed {Columns}. Known same-file const fragments are
+            // inlined before scanning so a column list cannot escape the rule by extraction.
+            var fragments = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (Match constant in SqlConstant().Matches(text))
+            {
+                fragments[constant.Groups[1].Value] = constant.Groups[2].Value;
+            }
+
+            foreach (Match match in RawStringLiteral().Matches(text))
+            {
+                string sql = match.Groups[1].Value;
+                foreach ((string name, string body) in fragments)
+                {
+                    sql = sql.Replace("{" + name + "}", body, StringComparison.Ordinal);
+                }
+
+                yield return (Path.GetRelativePath(SolutionGraph.RepositoryRoot, path), sql);
+            }
+        }
+    }
+
+    /// <summary>The column list of each SELECT or RETURNING clause in one SQL literal.</summary>
+    private static IEnumerable<string> ColumnLists(string sql)
+    {
+        foreach (Match match in SelectList().Matches(sql))
+        {
+            yield return match.Groups[1].Value;
+        }
+
+        foreach (Match match in ReturningList().Matches(sql))
+        {
+            yield return match.Groups[1].Value;
+        }
+    }
+
+    /// <summary>Splits a column list on commas, ignoring commas nested inside parentheses.</summary>
+    private static List<string> SplitTopLevel(string list)
+    {
+        var columns = new List<string>();
+        int depth = 0;
+        int start = 0;
+
+        for (int i = 0; i < list.Length; i++)
+        {
+            char c = list[i];
+            if (c == '(')
+            {
+                depth++;
+            }
+            else if (c == ')')
+            {
+                depth--;
+            }
+            else if (c == ',' && depth == 0)
+            {
+                columns.Add(list[start..i].Trim());
+                start = i + 1;
+            }
+        }
+
+        columns.Add(list[start..].Trim());
+        return columns;
+    }
+
+    [Fact]
     public void ThePersistenceRulesAreDocumentedWhereAnAuthorWillLookForThem()
     {
         // A rule enforced by a test but explained nowhere leaves the next author knowing only THAT
@@ -179,4 +313,22 @@ public sealed partial class QueryDisciplineTests
 
     [GeneratedRegex(@"\s+", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
     private static partial Regex Whitespace();
+
+    [GeneratedRegex("\"\"\"(.*?)\"\"\"", RegexOptions.Singleline | RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 2000)]
+    private static partial Regex RawStringLiteral();
+
+    [GeneratedRegex(@"const\s+string\s+(\w+)\s*=\s*\$?""""""(.*?)""""""", RegexOptions.Singleline | RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 2000)]
+    private static partial Regex SqlConstant();
+
+    [GeneratedRegex(@"\bSELECT\s+(?:DISTINCT\s+)?(.*?)\s+FROM\b", RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 2000)]
+    private static partial Regex SelectList();
+
+    [GeneratedRegex(@"\bRETURNING\s+(.*?)(?:;|$)", RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 2000)]
+    private static partial Regex ReturningList();
+
+    [GeneratedRegex(@"\bAS\s+(\w+)\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex TrailingAlias();
+
+    [GeneratedRegex(@"^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex BareSnakeColumn();
 }

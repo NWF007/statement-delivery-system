@@ -38,7 +38,7 @@ public static class DevTokenEndpoint
     {
         ArgumentNullException.ThrowIfNull(app);
 
-        app.MapPost("/v1/dev/tokens", (string customerId, IOptions<JwtOptions> options, bool staff = false) =>
+        app.MapPost("/v1/dev/tokens", (string customerId, IOptions<JwtOptions> options, bool staff = false, bool dpo = false) =>
         {
             JwtOptions jwt = options.Value;
 
@@ -72,7 +72,12 @@ public static class DevTokenEndpoint
                 Subject = new ClaimsIdentity(staff
                     ? [
                         new Claim("sub", subject.ToString("D")),
-                        new Claim("scope", DeliveryApiExtensions.StaffScope),
+
+                        // dpo stacks ON staff (erasure sits above the operator scope); the demo
+                        // and DPO-scope tests are the only consumers, and only in Development.
+                        new Claim("scope", dpo
+                            ? DeliveryApiExtensions.StaffScope + " " + DeliveryApiExtensions.DpoScope
+                            : DeliveryApiExtensions.StaffScope),
                       ]
                     : [new Claim("sub", subject.ToString("D"))]),
 
@@ -91,7 +96,11 @@ public static class DevTokenEndpoint
                 tokenType = "Bearer",
                 expiresInSeconds = 3600,
                 subject = subject.ToString("D"),
-                scope = staff ? DeliveryApiExtensions.StaffScope : null,
+                scope = staff
+                    ? (dpo
+                        ? DeliveryApiExtensions.StaffScope + " " + DeliveryApiExtensions.DpoScope
+                        : DeliveryApiExtensions.StaffScope)
+                    : null,
             });
         })
         .AllowAnonymous()

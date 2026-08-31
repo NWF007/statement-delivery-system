@@ -38,9 +38,25 @@ an open threat.
 *One row per identified threat. Status is `open`, `mitigated`, or `accepted`, and may only
 read `mitigated` when the Test column names a real, passing test.*
 
-| ID | Boundary | STRIDE category | Threat | Mitigation | Status | Test |
+| ID | Boundary | STRIDE | Threat | Mitigation | Status | Test |
 | --- | --- | --- | --- | --- | --- | --- |
-| TBD-1 | TBD | TBD | Illustrative placeholder row; replace when the first threat is analysed. | TBD | open | none |
+| T-01 | Public gateway | Spoofing | A stolen or guessed download link replayed by an attacker | Single-use tokens, 43-char CSPRNG, SHA-256 at rest, atomic consume - exactly one redemption ever wins (ADR-0013/0017) | mitigated | `ConcurrentRedemption_ExactlyOneSucceeds` |
+| T-02 | Public gateway | Info disclosure | Denial responses used as an oracle (valid vs invalid vs expired vs consumed) | One uniform 404 for every validation failure, 50 ms timing floor; real reason lives only in the audit trail | mitigated | `DeniedAccess_IsAudited_WithAnInternalReasonThatIsNeverReturned` |
+| T-03 | Customer API | Elevation | IDOR - one customer reading another's statements by id | Ownership is a WHERE-clause predicate on the JWT `sub`, never a post-load check; unowned == nonexistent (404, ADR-0012) | mitigated | `GetStatement_OwnedByAnother_Returns404` |
+| T-04 | Customer API | Info disclosure | Storage keys / crypto envelope leaking through API responses | Response contracts enumerate exactly the agreed fields; leak-probe tests assert the forbidden names and values never serialise | mitigated | `StatementResponse_NeverContainsStorageKeyOrCryptoFields` |
+| T-05 | Object storage | Tampering | Stored ciphertext modified, truncated or substituted | SDP1 framed AEAD: per-frame tags, AAD binds statement/customer/version, digest re-checked on read | mitigated | `Truncate_DropFinalFrame_IsDetected`, tamper suite |
+| T-06 | Object storage | Repudiation/Tampering | Retention bypassed by deleting objects early | S3 Object Lock COMPLIANCE mode - no principal can delete inside the window; GOVERNANCE refused outside Development at startup | mitigated | `Startup_WithoutObjectLock_FailsReadiness` |
+| T-07 | Database | Tampering | Audit history rewritten to hide access | Insert-only grants (no role holds UPDATE/DELETE), tamper trigger, 16 sharded hash chains re-verifiable end to end | mitigated | `ConcurrentWritersSameChain_ProduceValidChain`, `/v1/audit/verify` |
+| T-08 | Database | Repudiation | A privileged DB actor forges a SELF-CONSISTENT chain (rewrite events AND heads) | NOT closed: chain heads live beside events. External anchoring is the fix (`IChainAnchor`, no-op today) | **accepted, open** | documented in LIMITATIONS.md |
+| T-09 | Logs/telemetry | Info disclosure | Token plaintext, key material or statement content in logs, traces or metric labels | Central redactor covers every sensitive type; metric labels are closed sets; console output scanned | mitigated | `TokenPlaintext_NeverAppearsInAnyLogOrTraceOutput`, `TokenPlaintext_CanNeverBecomeAMetricLabel` |
+| T-10 | Key hierarchy | Info disclosure | CEK theft from the database enabling offline decryption | CEKs stored only WRAPPED under KMS-held cohort KEKs; plaintext keys pinned+wiped in memory; DB access alone is insufficient | mitigated | `KeyHierarchyTests` wrap/unwrap suite |
+| T-11 | Key hierarchy | Elevation | Erasure executed while litigation preservation applies | Decision engine precedence (hold outranks all), dual-layer holds, statement-scope visibility (V021), execution-time re-evaluation | mitigated | `Erasure_ReEvaluatesConflicts_AtExecutionTime` (both scopes) |
+| T-12 | Public gateway | DoS | Redemption flood exhausting connections or the DB | Per-address + concurrency rate limits, PgBouncer transaction pooling, bounded streaming (O(1) memory) | mitigated | `EndToEndDownload_200MB_UsesConstantMemory`, limiter tests |
+| T-13 | Any service | Elevation | A future endpoint shipped without authorisation | EndpointDataSource enumeration test: every route requires auth or sits on a justified allow-list | mitigated | `EndpointAuthorizationMatrixTests` |
+| T-14 | Supply chain | Tampering | Malicious or vulnerable dependency / mutable base image | Central package pinning, SDK pinned via global.json, chiseled non-root images, CI vulnerability scan | mitigated | `SupplyChainAndConfigurationTests`, `ToolchainPinningTests` |
+
+The one deliberately **open** row is T-08 — named, bounded, and priced in
+`docs/LIMITATIONS.md` rather than hidden.
 
 ## Controls already in the scaffold
 

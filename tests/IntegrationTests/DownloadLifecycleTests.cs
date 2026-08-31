@@ -308,17 +308,21 @@ public sealed class DownloadLifecycleTests
         // CryptographicException, so the pre-existing catch never saw it.
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
 
-        // Two full frames plus a tail, so there is a SECOND frame to corrupt and a first frame's
-        // worth of bytes (64 KiB) already delivered when it fails.
-        const int SizeBytes = (128 * 1024) + 512;
+        // Thirty-two full frames plus a tail: the corruption sits in the LAST full frame, so
+        // roughly 2 MiB must stream first - far past any response buffering, which is what
+        // guarantees the client has real bytes in hand when the abort lands. (The original two
+        // frames fit entirely inside the server's buffers; the client saw zero bytes and the
+        // test could not tell the abort path from the pre-response path.)
+        const int FullFrames = 32;
+        const int SizeBytes = (FullFrames * 65536) + 512;
 
         SeededStatement seeded = await DownloadScenario
             .SeedAsync(_postgres, _minio, sizeBytes: SizeBytes, cancellationToken: cancellationToken).ConfigureAwait(true);
 
-        // Header(48) + frame0(4 + 65536 + 16) = 65604 is where frame 1 begins; +4 skips its length
-        // prefix, +100 lands inside its ciphertext.
-        const int SecondFramePayload = 48 + 4 + 65536 + 16 + 4 + 100;
-        await CorruptObjectByteAsync(seeded.StorageKey, SecondFramePayload, cancellationToken).ConfigureAwait(true);
+        // Header(48) + N-1 whole frames (4 + 65536 + 16 each) is where the last full frame
+        // begins; +4 skips its length prefix, +100 lands inside its ciphertext.
+        const int LastFramePayload = 48 + ((FullFrames - 1) * (4 + 65536 + 16)) + 4 + 100;
+        await CorruptObjectByteAsync(seeded.StorageKey, LastFramePayload, cancellationToken).ConfigureAwait(true);
 
         using DeliveryApiFactory api = CreateApi();
         using DownloadGatewayFactory gateway = CreateGateway();
@@ -333,12 +337,15 @@ public sealed class DownloadLifecycleTests
 
         long received = 0;
         bool transferFailed = false;
+        HttpStatusCode? observedStatus = null;
 
         try
         {
             using HttpResponseMessage response = await client
                 .GetAsync(Redeem(link.Plaintext), HttpCompletionOption.ResponseHeadersRead, cancellationToken)
                 .ConfigureAwait(true);
+
+            observedStatus = response.StatusCode;
 
             // The headers went out before the corruption was reachable, so this really is a 200.
             response.StatusCode.ShouldBe(HttpStatusCode.OK);
@@ -359,11 +366,23 @@ public sealed class DownloadLifecycleTests
         (transferFailed || received < SizeBytes)
             .ShouldBeTrue($"the transfer delivered all {SizeBytes} bytes cleanly despite a corrupt frame");
 
-        // And it got at least the first frame, or the corruption was not where this test believes it
-        // was and the abort branch was never exercised.
-        (transferFailed ? received : 0).ShouldBeGreaterThan(
-            0,
-            "no bytes were delivered before the failure, so this exercised the pre-response path, not the abort path");
+        // And the ABORT branch is the one exercised, distinguished by STATUS rather than by
+        // delivered bytes: the pre-response path answers a uniform 404
+        // (CorruptedFirstFrame pins that), while this path commits a 200 before the corrupt
+        // frame is reachable. Byte counts cannot make the distinction through TestServer's
+        // in-memory transport - the server can write the whole body and the abort into the
+        // unbounded pipe before the client's read loop is ever scheduled, so a zero here
+        // measures scheduling, not the product.
+        if (observedStatus is { } status)
+        {
+            status.ShouldBe(
+                HttpStatusCode.OK,
+                "a non-200 means the failure was served before the response committed - the pre-response path, not the abort path");
+        }
+        else
+        {
+            transferFailed.ShouldBeTrue("no status and no failure means the request never completed at all");
+        }
 
         Interlocked.Read(ref failures).ShouldBe(1);
 
@@ -1391,8 +1410,12 @@ public sealed class DownloadLifecycleTests
     {
         await using NpgsqlConnection connection = await _postgres.OpenAdminAsync(cancellationToken).ConfigureAwait(false);
 
-        return await connection.ExecuteScalarAsync<DateTimeOffset>(new CommandDefinition(
+        // Read as DateTime: Dapper's scalar path converts with Convert.ChangeType, which has
+        // no DateTime-to-DateTimeOffset conversion and throws InvalidCastException.
+        DateTime now = await connection.ExecuteScalarAsync<DateTime>(new CommandDefinition(
             "SELECT now();", commandTimeout: 30, cancellationToken: cancellationToken)).ConfigureAwait(false);
+
+        return new DateTimeOffset(now, TimeSpan.Zero);
     }
 
     private static async Task<long> DrainAsync(Stream stream, CancellationToken cancellationToken)

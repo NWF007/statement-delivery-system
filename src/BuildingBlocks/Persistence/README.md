@@ -61,6 +61,18 @@ The readiness check in
 [`ServiceDefaults/Storage/ObjectStorage.cs`](../ServiceDefaults/Storage/ObjectStorage.cs) is
 deliberately a metadata call for this reason.
 
+## 5a. Every mapped snake_case column carries a PascalCase alias.
+
+Dapper maps columns to properties by name, and nothing in this codebase turns on underscore
+matching. A `snake_case` column in a multi-column select list therefore maps to **no property at
+all**, and an init-only record swallows the miss as a default value instead of an error. The first
+real execution of the gated tests showed how quiet that is: audit appends read `last_seq` and
+`last_hash` into nothing and wrote a genesis-less chain, run rows surfaced `0001-01-01` periods,
+and the outbox relay published events with an empty type. Aliasing to snake_case
+(`AS was_consumed`) is the same bug in disguise. Single-column lists are exempt - they feed scalar
+reads, where the name is irrelevant. Enforced by
+`QueryDisciplineTests.EveryMappedColumn_CarriesAPascalCaseAlias`.
+
 ## 5. Slow queries are visible in development.
 
 The local PostgreSQL container runs with `log_min_duration_statement=200`, set in

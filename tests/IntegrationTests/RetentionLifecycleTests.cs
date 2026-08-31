@@ -402,7 +402,9 @@ public sealed class RetentionLifecycleTests
 
         using Harness harness = CreateHarness();
 
-        var unitOfWork = new NpgsqlUnitOfWork(harness.Factory);
+        // As app_delivery: scheduling and cancelling are the DPO endpoint's acts (V018 grants
+        // INSERT on erasure_request to the API role alone).
+        var unitOfWork = new NpgsqlUnitOfWork(harness.DeliveryFactory);
         await unitOfWork.ExecuteAsync(
             async (NpgsqlTransaction tx, CancellationToken token) =>
                 _ = await harness.Erasures.ScheduleAsync(
@@ -449,7 +451,10 @@ public sealed class RetentionLifecycleTests
         }
 
         var restoreId = Guid.CreateVersion7();
-        var unitOfWork = new NpgsqlUnitOfWork(harness.Factory);
+
+        // As app_delivery: a restore request is created by the customer-facing API (V018 gives
+        // INSERT on restore_request to it alone; the worker only completes and expires them).
+        var unitOfWork = new NpgsqlUnitOfWork(harness.DeliveryFactory);
         await unitOfWork.ExecuteAsync(
             (NpgsqlTransaction tx, CancellationToken token) =>
                 harness.Restores.CreateAsync(
@@ -695,28 +700,34 @@ public sealed class RetentionLifecycleTests
 
         _ = await harness.Erasure.RunAsync(fenceToken: 32, ct).ConfigureAwait(true);
 
-        // The block's REASON changes: hold released, but the statement's statutory retention is
-        // pushed back into the future - the next pass blocks on the statute instead.
+        // THE TRANSITION. Under the corrected semantics retention never blocks an erasure
+        // (crypto-erasure is what reconciles the two statutes), so the reachable state change
+        // is hold released -> erasure completes. That transition is a new fact and must land
+        // on the chain, exactly as the blocked state did.
         await using (NpgsqlConnection admin = await _postgres.OpenAdminAsync(ct).ConfigureAwait(true))
         {
             _ = await admin.ExecuteAsync(new CommandDefinition(
                 """
                 UPDATE legal_hold SET released_at = now(), released_by = 'test'
                  WHERE case_reference = 'CASE-2026-CHANGE';
-                UPDATE statement SET retain_until = @future WHERE customer_id = @id;
                 """,
-                new { id = published.CustomerId, future = DateOnly.FromDateTime(DateTime.UtcNow).AddYears(5) },
+                new { id = published.CustomerId },
                 commandTimeout: 30, cancellationToken: ct)).ConfigureAwait(true);
         }
 
         _ = await harness.Erasure.RunAsync(fenceToken: 33, ct).ConfigureAwait(true);
 
         await using NpgsqlConnection connection = await _postgres.OpenAdminAsync(ct).ConfigureAwait(true);
-        long audits = await connection.ExecuteScalarAsync<long>(new CommandDefinition(
-            "SELECT count(*) FROM audit_event WHERE customer_id = @id AND action = 'ERASURE_BLOCKED';",
+        (long blocked, long completed) = await connection.QuerySingleAsync<(long, long)>(new CommandDefinition(
+            """
+            SELECT count(*) FILTER (WHERE action = 'ERASURE_BLOCKED'),
+                   count(*) FILTER (WHERE action = 'ERASURE_COMPLETED')
+              FROM audit_event WHERE customer_id = @id;
+            """,
             new { id = published.CustomerId },
             commandTimeout: 30, cancellationToken: ct)).ConfigureAwait(true);
-        audits.ShouldBe(2, "a CHANGED reason is a new fact and must land on the chain");
+        blocked.ShouldBe(1, "the hold blocked exactly one pass, audited once");
+        completed.ShouldBe(1, "the release is a new fact and its completion must land on the chain");
     }
 
     [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]
@@ -887,11 +898,12 @@ public sealed class RetentionLifecycleTests
                 ct).ConfigureAwait(true);
         }
 
-        // Enough pages to cover all 256 shards in one tick, so the test does not depend on
-        // where the cursor happens to be pointing after other runs.
+        // Enough pages to cover every shard in one tick, so the test does not depend on where
+        // the cursor happens to be pointing after other runs. The scheme is 4096 shards
+        // (StorageKeyScheme.ShardCount) and an empty shard still costs its walk one page.
         using Harness harness = CreateHarness(options =>
         {
-            options.OrphanPagesPerTick = 300;
+            options.OrphanPagesPerTick = StatementDelivery.Domain.Statements.StorageKeyScheme.ShardCount + 64;
             options.OrphanPageSize = 1000;
         });
 
@@ -920,6 +932,9 @@ public sealed class RetentionLifecycleTests
     private sealed class Harness : IDisposable
     {
         public required NpgsqlConnectionFactory Factory { get; init; }
+
+        /// <summary>The API's role, for acts the design assigns to it - scheduling erasures.</summary>
+        public required NpgsqlConnectionFactory DeliveryFactory { get; init; }
 
         public required RetentionSweepRepository Statements { get; init; }
 
@@ -1011,6 +1026,7 @@ public sealed class RetentionLifecycleTests
         return new Harness
         {
             Factory = factory,
+            DeliveryFactory = _postgres.ConnectionFactoryFor("app_delivery"),
             Statements = statements,
             Holds = holds,
             Erasures = erasures,
@@ -1189,7 +1205,10 @@ public sealed class RetentionLifecycleTests
     private static async Task ScheduleErasureAsync(
         Harness harness, Guid customerId, DateTimeOffset dueAt, CancellationToken ct)
     {
-        var unitOfWork = new NpgsqlUnitOfWork(harness.Factory);
+        // Runs as app_delivery, the way the real DPO endpoint does: V018 grants INSERT on
+        // erasure_request to the API role alone, and the retention role's 42501 on the first
+        // real execution was this helper impersonating the wrong actor.
+        var unitOfWork = new NpgsqlUnitOfWork(harness.DeliveryFactory);
         bool armed = false;
         await unitOfWork.ExecuteAsync(
             async (NpgsqlTransaction tx, CancellationToken token) =>

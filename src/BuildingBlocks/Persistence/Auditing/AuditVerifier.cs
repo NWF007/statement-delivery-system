@@ -1,5 +1,7 @@
 using System.Text.Json;
 using Dapper;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using StatementDelivery.Domain.Auditing;
 using StatementDelivery.Domain.Identifiers;
@@ -45,15 +47,26 @@ public interface IAuditVerifier
 /// exists to provide. See docs/adr/0010-sharded-audit-hash-chains.md.
 /// </para>
 /// </remarks>
-public sealed class PostgresAuditVerifier : IAuditVerifier
+public sealed partial class PostgresAuditVerifier : IAuditVerifier
 {
     // Ordered by chain_seq, served by idx_audit_chain_seq. Explicit column list: a SELECT * here
     // would start returning new columns to a recomputation that does not know about them, and the
     // chain would fail to verify for a reason that looks exactly like tampering.
     private const string ReadChainSql = """
-        SELECT chain_seq, id, statement_id, customer_id, actor_type, actor_id,
-               action, outcome, denial_reason_code, host(source_ip) AS source_ip,
-               user_agent_hash, context::text AS context, occurred_at, prev_hash, hash
+        SELECT chain_seq            AS ChainSeq,
+               id,
+               statement_id         AS StatementId,
+               customer_id          AS CustomerId,
+               actor_type           AS ActorType,
+               actor_id             AS ActorId,
+               action, outcome,
+               denial_reason_code   AS DenialReasonCode,
+               host(source_ip)      AS SourceIp,
+               user_agent_hash      AS UserAgentHash,
+               context::text        AS context,
+               occurred_at          AS OccurredAt,
+               prev_hash            AS PrevHash,
+               hash
           FROM audit_event
          WHERE chain_id = @chainId
            AND chain_seq >= @fromSeq
@@ -70,10 +83,17 @@ public sealed class PostgresAuditVerifier : IAuditVerifier
         """;
 
     private readonly IDbConnectionFactory _connections;
+    private readonly ILogger<PostgresAuditVerifier> _logger;
 
     /// <summary>Initialises a new instance of the <see cref="PostgresAuditVerifier"/> class.</summary>
     /// <param name="connections">Connection factory.</param>
-    public PostgresAuditVerifier(IDbConnectionFactory connections) => _connections = connections;
+    /// <param name="logger">Break log. The verify endpoint deliberately withholds hashes from its
+    /// HTTP response and directs the operator here; without this log a break is a boolean.</param>
+    public PostgresAuditVerifier(IDbConnectionFactory connections, ILogger<PostgresAuditVerifier>? logger = null)
+    {
+        _connections = connections;
+        _logger = logger ?? NullLogger<PostgresAuditVerifier>.Instance;
+    }
 
     /// <inheritdoc />
     public async Task<ChainVerification> VerifyChainAsync(
@@ -132,6 +152,7 @@ public sealed class PostgresAuditVerifier : IAuditVerifier
             // useful finding than "record 42's hash is wrong".
             if (row.ChainSeq != expectedSeq)
             {
+                LogChainBreak(_logger, chainId, expectedSeq, "sequence gap - a record is missing", "-", "-");
                 return new ChainVerification(chainId, false, checkedCount, expectedSeq, null, null);
             }
 
@@ -139,12 +160,26 @@ public sealed class PostgresAuditVerifier : IAuditVerifier
             // spliced in from elsewhere even when its own hash is internally consistent.
             if (!row.PrevHash.AsSpan().SequenceEqual(previousHash))
             {
+                LogChainBreak(
+                    _logger, chainId, row.ChainSeq, "stored prev_hash is not the carried-forward hash",
+                    Convert.ToHexStringLower(previousHash), Convert.ToHexStringLower(row.PrevHash));
                 return new ChainVerification(chainId, false, checkedCount, row.ChainSeq, previousHash, row.PrevHash);
             }
 
-            byte[] expected = AuditHashing.ComputeHash(
-                previousHash,
-                AuditHashing.Canonicalise(chainId, row.ChainSeq, row.ToEntry()));
+            string canonical = AuditHashing.Canonicalise(chainId, row.ChainSeq, row.ToEntry());
+            byte[] expected = AuditHashing.ComputeHash(previousHash, canonical);
+
+            if (!expected.AsSpan().SequenceEqual(row.Hash))
+            {
+                LogChainBreak(
+                    _logger, chainId, row.ChainSeq, "recomputed hash differs - a field no longer matches what was signed",
+                    Convert.ToHexStringLower(expected), Convert.ToHexStringLower(row.Hash));
+
+                // The canonical form is audit METADATA - ids, actor, action, timestamps, context
+                // keys; statement content never enters it. Debug level, because it is the one
+                // string that tells the operator WHICH field diverged.
+                LogRecomputedCanonical(_logger, chainId, row.ChainSeq, canonical);
+            }
 
             if (!expected.AsSpan().SequenceEqual(row.Hash))
             {
@@ -158,6 +193,19 @@ public sealed class PostgresAuditVerifier : IAuditVerifier
 
         return ChainVerification.Ok(chainId, checkedCount);
     }
+
+    [LoggerMessage(
+        EventId = 2401,
+        Level = LogLevel.Warning,
+        Message = "Audit chain {ChainId} breaks at seq {Seq}: {Kind}. expected={ExpectedHash} actual={ActualHash}")]
+    private static partial void LogChainBreak(
+        ILogger logger, short chainId, long seq, string kind, string expectedHash, string actualHash);
+
+    [LoggerMessage(
+        EventId = 2402,
+        Level = LogLevel.Debug,
+        Message = "Recomputed canonical for chain {ChainId} seq {Seq}: {Canonical}")]
+    private static partial void LogRecomputedCanonical(ILogger logger, short chainId, long seq, string canonical);
 
     private sealed record AuditRow
     {
@@ -243,7 +291,7 @@ public sealed class PostgresAuditVerifier : IAuditVerifier
 /// so that verification compares against something the database's attacker never held.
 /// </para>
 /// <para>
-/// TODO(security): the implementation is deferred; only this seam and a no-op exist. Naming the
+/// TODO(security): the implementation is deferred; only this seam and a no-op exist (tracked in docs/LIMITATIONS.md, "Known limitations"). Naming the
 /// limit of your own control - and scaffolding the thing that closes it - is the point. Until an
 /// anchor ships, treat chain verification as evidence against application bugs and opportunistic
 /// tampering, NOT against a privileged insider.
@@ -264,7 +312,7 @@ public interface IChainAnchor
 /// implementation lands.
 /// </summary>
 /// <remarks>
-/// TODO(security): replace with an Object Lock-backed implementation. This type existing must never
+/// TODO(security): replace with an Object Lock-backed implementation (docs/LIMITATIONS.md, "Next" item 3). This type existing must never
 /// be read as the gap being closed - it is a placeholder that makes the gap visible in the
 /// dependency graph rather than only in a document.
 /// </remarks>

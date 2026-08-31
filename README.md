@@ -1,21 +1,45 @@
 # Secure Statement Delivery Platform
 
-[![CI](https://github.com/OWNER/statement-delivery/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/statement-delivery/actions/workflows/ci.yml)
+[![CI](https://github.com/NWF007/statement-delivery-system/actions/workflows/ci.yml/badge.svg)](https://github.com/NWF007/statement-delivery-system/actions/workflows/ci.yml)
 
-> **Status: the delivery path is complete and encrypted end to end.** A customer can authenticate,
-> list their own statements — and not anyone else's — issue a single-use download link, and redeem
-> it for bytes that were **encrypted at rest with a framed AEAD** and are decrypted and
-> authenticated frame by frame as they stream. Every access, including every denial, lands in a
-> tamper-evident hash chain. PDF generation and retention purge are deliberately still absent. See
-> [Non-goals](#non-goals).
+Account statements are among the most sensitive documents a bank holds, and they are subject to
+a seven-year regulatory retention period. This platform generates them at a scale of roughly
+**30 million a month**, stores them encrypted under a **write-once compliance lock**, and
+delivers them through **single-use, time-limited links** with a tamper-evident audit trail.
 
-## Problem
+The hardest constraint is not throughput. It is that objects under a Compliance-mode Object
+Lock **cannot be deleted by anyone** — so when a customer exercises their POPIA right to
+erasure inside the retention window, deletion is unavailable. The system resolves this with
+per-customer key destruction: the ciphertext remains, permanently unreadable. That one
+requirement drove the encryption architecture (a three-tier key hierarchy), which drove the
+delivery architecture (decrypt-and-stream through a gateway, never presigned URLs), which is
+why this README leads with the threat model rather than a feature list.
 
-Generate roughly **30 million PDF account statements a month**, store them encrypted and
-immutably for a **seven-year regulatory retention period**, and deliver them to customers through
-short-lived, single-use, non-guessable download links with a tamper-evident audit trail.
+## Threat model
 
-Two subsystems with opposite scaling profiles:
+This is a security system and was built as one — the full STRIDE analysis, per boundary, with
+the mitigating test named per threat, is in **[docs/THREAT-MODEL.md](docs/THREAT-MODEL.md)**.
+The shape of it:
+
+| Boundary | Representative threat | Answer |
+| --- | --- | --- |
+| Public gateway | Stolen/replayed link; denial oracles | Single-use CSPRNG tokens, hashed at rest, atomic consume; ONE uniform 404 with a 50 ms timing floor |
+| Customer API | IDOR; data leaking through responses | Ownership as a WHERE-clause predicate on the JWT subject; 404-not-403; leak-probe tests on every contract |
+| Object storage | Tampering; early deletion | Framed AEAD with identity-binding AAD; Object Lock COMPLIANCE, refused as GOVERNANCE outside Development |
+| Database | Audit rewritten to hide access | Insert-only grants, tamper trigger, 16 sharded hash chains, re-verifiable end to end |
+| Key hierarchy | CEK theft; unlawful erasure | Keys stored only wrapped under KMS KEKs; a pure decision engine where a legal hold outranks everything |
+| Logs / telemetry | Secrets in logs, traces, metric labels | A central redactor and closed-set labels, enforced by tests |
+| The future | An endpoint added without auth | An `EndpointDataSource` enumeration test: every route authorised or on a justified allow-list |
+
+**The one open item is named, not hidden**: audit chain heads live beside the events they
+attest, so a sufficiently privileged insider could forge a self-consistent chain. The seam for
+external anchoring exists (`IChainAnchor`); the limitation and its acceptance rationale are in
+[docs/LIMITATIONS.md](docs/LIMITATIONS.md).
+
+## The problem
+
+Two subsystems with opposite scaling profiles, which is the single most important architectural
+fact about the domain:
 
 |  | Generation | Delivery |
 | --- | --- | --- |
@@ -31,7 +55,8 @@ and it is written up in [ADR-0001](docs/adr/0001-microservices-over-modular-mono
 ## Quickstart
 
 ```bash
-git clone <repo> && cd statement-delivery
+git clone https://github.com/NWF007/statement-delivery-system.git
+cd statement-delivery-system
 cp .env.example .env
 docker compose up --build
 ```
@@ -95,6 +120,19 @@ compose supplies; `.env.example` lists all of them.
 
 ## Architecture
 
+**System context** — who talks to what:
+
+```mermaid
+flowchart TD
+    customer(["Customer"]) -->|list, issue links| platform["Statement Delivery Platform"]
+    customer -->|redeem single-use link| platform
+    operator(["Back-office operator"]) -->|runs, holds, erasure, audit verify| platform
+    platform -->|monthly transaction fetch| ledger[["Core banking ledger<br/>(mock in local dev)"]]
+    platform -->|encrypted statements,<br/>7-year Object Lock| storage[("Object storage")]
+```
+
+**Container view** — the deployables and their one-direction dependencies:
+
 ```mermaid
 flowchart LR
     subgraph edge["Public internet"]
@@ -144,6 +182,29 @@ Everything except the migrator reaches PostgreSQL through PgBouncer. That is not
 without it the 400-replica generation fleet alone would ask for ~2,000 backends against a server
 whose practical ceiling is in the low hundreds.
 See [ADR-0008](docs/adr/0008-pgbouncer-transaction-pooling.md).
+
+
+**The download sequence** — the path everything else exists to protect:
+
+```mermaid
+sequenceDiagram
+    participant C as Customer
+    participant A as Delivery.Api
+    participant G as Download.Gateway
+    participant P as PostgreSQL
+    participant S as Object storage
+
+    C->>A: POST /statements/{id}/download-links (JWT)
+    A->>P: insert SHA-256(token), audit LINK_ISSUED (one txn)
+    A-->>C: 201 url with plaintext token (exists nowhere else)
+    C->>G: GET /v1/d/{token}
+    G->>P: atomic consume UPDATE..RETURNING + audit DOWNLOAD_STARTED (one txn)
+    Note over G,P: exactly one concurrent redeemer wins
+    G->>S: GET ciphertext (streamed)
+    G-->>C: 200 PDF - decrypted and tag-verified frame by frame
+    C->>G: same link again
+    G-->>C: 404 (uniform; real reason only in the audit trail)
+```
 
 ## Services
 
@@ -208,63 +269,33 @@ that no storage-layer mechanism could. The proof is a test:
 still exists, and confirms nothing can read it. See ADR-0020 (the hierarchy and its
 arithmetic), ADR-0035 (the cooling-off window) and ADR-0036 (why the metadata survives).
 
-## Design decisions
+## Key design decisions
 
-| ADR | Decision |
-| --- | --- |
-| [0000](docs/adr/0000-record-architecture-decisions.md) | Record architecture decisions |
-| [0001](docs/adr/0001-microservices-over-modular-monolith.md) | Split generation and delivery into separate deployables |
-| [0002](docs/adr/0002-dapper-and-dbup-over-ef-core.md) | Dapper and DbUp instead of Entity Framework Core |
-| [0003](docs/adr/0003-built-in-logging-over-serilog.md) | Built-in logging with the OTel exporter instead of Serilog |
-| [0004](docs/adr/0004-aspire-dashboard-without-apphost.md) | Aspire Dashboard container without an AppHost |
-| [0005](docs/adr/0005-partition-not-shard.md) | Partition by range, do not shard — with the arithmetic |
-| [0006](docs/adr/0006-uuidv7-primary-keys.md) | Application-generated UUIDv7 primary keys |
-| [0007](docs/adr/0007-partitioning-strategy.md) | Range-partition on time, require bounded date ranges |
-| [0008](docs/adr/0008-pgbouncer-transaction-pooling.md) | Route all service traffic through PgBouncer |
-| [0009](docs/adr/0009-denormalised-customer-id-on-statement.md) | Denormalise `customer_id` onto `statement` for hot-path authorisation |
-| [0010](docs/adr/0010-sharded-audit-hash-chains.md) | Shard the audit hash chain across sixteen chains — includes the limits of what it proves |
-| [0011](docs/adr/0011-canonical-serialisation-for-hashing.md) | One canonical serialisation for audit hashing |
-| [0012](docs/adr/0012-404-not-403-for-unowned-resources.md) | Return 404, never 403, for resources the caller does not own |
-| [0013](docs/adr/0013-mandatory-date-range-on-statement-queries.md) | Require a bounded date range on every statement query |
-| [0014](docs/adr/0014-no-idempotency-replay-on-link-issue.md) | No idempotency replay on link issue — the response body holds a secret |
-| [0015](docs/adr/0015-unauthenticated-redemption-endpoint.md) | The redemption endpoint is unauthenticated; the token is the credential |
-| [0016](docs/adr/0016-no-range-request-support.md) | No HTTP range requests — resumability versus single use |
-| [0017](docs/adr/0017-consume-before-stream.md) | Consume the token before streaming, and never release it on abort |
-| [0018](docs/adr/0018-per-ip-not-per-token-rate-limiting.md) | Rate limit per IP and per customer, never per token |
-| [0019](docs/adr/0019-framed-aead-over-one-shot-gcm.md) | A framed AEAD over one-shot GCM — .NET will not stream it, and why that is right |
-| [0020](docs/adr/0020-three-tier-key-hierarchy.md) | Cohort KEK → per-customer CEK → per-object DEK — the $26M/month arithmetic |
-| [0021](docs/adr/0021-envelope-encryption-over-sse-kms.md) | Client-side envelope encryption rather than SSE-KMS — crypto-erasure decides it |
-| [0022](docs/adr/0022-object-lock-compliance-mode.md) | Object Lock in COMPLIANCE mode, GOVERNANCE in Development |
-| [0023](docs/adr/0023-high-cardinality-storage-key-prefix.md) | A hashed shard leads the storage key, not the date |
-| [0024](docs/adr/0024-security-gating-reads-run-in-the-callers-transaction.md) | Security-gating reads run in the caller's transaction |
-| [0025](docs/adr/0025-audit-events-bind-to-the-transaction-they-describe.md) | Audit events bind to the transaction they describe |
-| [0026](docs/adr/0026-postgres-queue-over-message-broker.md) | The generation queue is PostgreSQL, not a message broker |
-| [0027](docs/adr/0027-attempts-increment-on-claim.md) | Attempts increment on claim, not on completion |
-| [0028](docs/adr/0028-questpdf-licensing-position.md) | The QuestPDF licensing position |
-| [0029](docs/adr/0029-deterministic-pdf-rendering.md) | Byte-deterministic PDF rendering |
-| [0030](docs/adr/0030-pause-not-fail-on-circuit-open.md) | Pause the run when the ledger circuit opens; never fail it |
-| [0031](docs/adr/0031-spool-ciphertext-for-content-length.md) | Spool ciphertext to disk so every PUT declares a Content-Length |
-| [0032](docs/adr/0032-port-contracts-tested-with-production-shapes.md) | Test ports with the awkward shapes production produces |
-| [0033](docs/adr/0033-legal-conflict-surfaced-not-resolved.md) | Surface legal conflicts with their basis; never resolve them in code |
-| [0034](docs/adr/0034-delete-storage-before-marking-purged.md) | Purge deletes storage first, then marks the row |
-| [0035](docs/adr/0035-cooling-off-period-on-erasure.md) | Crypto-erasure schedules seven days out, re-checked at execution |
-| [0036](docs/adr/0036-metadata-survives-purge.md) | The statement row survives its own purge |
-| [0037](docs/adr/0037-dual-layer-legal-hold.md) | Legal holds in the database AND the object store, storage first |
-| [0038](docs/adr/0038-archive-tier-simulation-in-local-dev.md) | The archive tier is simulated locally, and labelled as such |
-| [0039](docs/adr/0039-orphan-sweep-reports-does-not-delete.md) | The orphan sweep reports and never deletes |
+The full index — 42 ADRs, grouped by theme — is [docs/adr/README.md](docs/adr/README.md).
+The five with the most reasoning behind them:
 
-Each ADR ends with a **Revisit when** section: two to four falsifiable triggers with concrete
-thresholds. It turns a justification into a claim that can be shown to be wrong.
-
-Several of these are additionally enforced as **failing tests** rather than as prose: no project
-may reference Entity Framework Core or FluentAssertions; the domain layer may reference nothing at
-all; no query may use `SELECT *` or `OFFSET`; and an integration test runs `EXPLAIN` and asserts a
-bounded query prunes partitions. An architectural decision written only in a document is one that
-gets reversed by somebody who never read it.
-
-Also see [`docs/SCALE.md`](docs/SCALE.md), [`docs/COST.md`](docs/COST.md) and
-[`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md) — heading skeletons, to be filled with measured
-output rather than estimates.
+1. **Proxy delivery, never presigned URLs** — the standard argument for presigned URLs is
+   bandwidth offload, and the arithmetic says peak delivery bandwidth here is ~6 MB/s (~$22/month
+   of egress). That buys nothing, and a presigned URL cannot do per-frame decryption, uniform
+   denials or consume-before-stream. Driven by the cost model, not preference —
+   [ADR-0015](docs/adr/0015-unauthenticated-redemption-endpoint.md),
+   [ADR-0017](docs/adr/0017-consume-before-stream.md), [docs/COST.md](docs/COST.md).
+2. **Envelope encryption over SSE-KMS** — SSE-KMS decrypts for anyone with bucket access and
+   cannot erase anything. Client-side envelope encryption is what makes crypto-erasure real:
+   destroy one key row, and every copy — live, versioned, backed up — becomes unreadable at once.
+   [ADR-0021](docs/adr/0021-envelope-encryption-over-sse-kms.md).
+3. **A framed AEAD, because .NET's `AesGcm` cannot stream** — one-shot GCM would mean buffering
+   whole statements in memory per request. SDP1 frames carry per-frame tags with the statement's
+   identity in the AAD, so the gateway authenticates as it streams in O(1) memory.
+   [ADR-0019](docs/adr/0019-framed-aead-over-one-shot-gcm.md).
+4. **The three-tier key hierarchy, from the $26M/month arithmetic** — one KMS key per customer
+   is the clean erasure design and costs 26M × $1/month. Cohort KEKs in KMS (~$1k/month) wrapping
+   per-customer CEKs in the database splits the difference and keeps erasure per-customer.
+   [ADR-0020](docs/adr/0020-three-tier-key-hierarchy.md).
+5. **Legal conflicts are surfaced with their statutory basis, never resolved in code** — a pure
+   decision engine encodes the precedence (hold > Object Lock > statute), exhaustively tested,
+   and every refusal cites the law and the date: *409 — cannot erase: FICA s23 requires retention
+   until 2031-03-14*. [ADR-0033](docs/adr/0033-legal-conflict-surfaced-not-resolved.md).
 
 ## The audit trail, and the limit of what it proves
 
@@ -283,26 +314,31 @@ independent credentials. `IChainAnchor` is the seam; the implementation is defer
 opportunistic tampering, **not** against a privileged insider.
 See [ADR-0010](docs/adr/0010-sharded-audit-hash-chains.md).
 
-## Non-goals
+## What this does not do
 
-Deliberately **absent**, and absent is the correct state for this phase:
+Explicit non-goals, each a decision rather than an omission:
 
-- PDF generation and statement runs. `Generation.Worker` has its lease, its batch loop and now its
-  encrypting writer; what it lacks is anything that renders a PDF.
-- Retention purge, legal hold enforcement, and the execution of crypto-erasure.
-  `ICustomerKeyService.DestroyCekAsync` throws `NotImplementedException` on purpose: erasure is
-  irreversible and the code that decides whether it is *lawful yet* does not exist.
-  ⚠ **Object Lock expiry is not deletion** — an expired retention makes an object eligible for
-  deletion and removes nothing. Without that purge job the storage bill runs forever. See
-  [ADR-0022](docs/adr/0022-object-lock-compliance-mode.md).
-- KMS key rotation. `kek_id` is recorded per object so rotation need not rewrite history, and
-  `idx_customer_key_cohort` exists so a cohort can be walked, but nothing rotates anything yet.
-- Real AWS KMS in CI. `AwsKmsKeyProvider` is implemented; the local stack uses `LocalKeyProvider`,
-  which derives every cohort key from a configuration secret and **refuses to start outside
-  Development**.
-- The `IChainAnchor` implementation — interface and no-op only.
-- Kubernetes manifests, Helm charts, Terraform.
-- An Aspire AppHost — see [ADR-0004](docs/adr/0004-aspire-dashboard-without-apphost.md).
+- **HTTP Range requests** — a resumable download conflicts with single-use tokens; the tokens
+  won ([ADR-0016](docs/adr/0016-no-range-request-support.md)).
+- **Automatic orphan deletion** — the sweep reports, permanently; inventory-driven deletion is
+  how comparison bugs destroy data ([ADR-0039](docs/adr/0039-orphan-sweep-reports-does-not-delete.md)).
+- **KMS key rotation** — `kek_id` per object and the cohort index exist so rotation never
+  rewrites history; the rotation job itself is future work.
+- **A real message broker** — the transactional outbox is real; its transport is a logging sink
+  until a consumer exists ([ADR-0026](docs/adr/0026-postgres-queue-over-message-broker.md)).
+- **Kubernetes/Terraform, multi-region active-active** — deployment topology is designed in
+  [docs/SCALE.md](docs/SCALE.md), not built.
+- **Real AWS KMS in CI** — the adapter is implemented; CI and local use the Development-only
+  local provider. What is simulated locally is itemised in
+  [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
+
+## Measured performance
+
+The load harness, scenarios and the exact seed/export recipe live in [`load/`](load/README.md);
+results, query plans and the capacity model live in [docs/SCALE.md](docs/SCALE.md). SCALE.md
+distinguishes, honestly, between **hypotheses** (three named bottleneck candidates, written down
+before measuring) and **measured** numbers — the measured tables are filled in on a
+Docker-capable host, and each table states its provenance.
 
 ## Running the tests
 
@@ -351,23 +387,17 @@ dotnet run --project tools/seed -- --customers 100000 --months 24
 Writes ~2.4M rows through Npgsql binary COPY, pre-creating every daily partition it needs, then
 runs `ANALYZE` so the `EXPLAIN` output that goes into `docs/SCALE.md` means something.
 
-## What's next
+## Repository map
 
-In rough order of what unblocks the most:
-
-1. **`download_token` and its atomic consume** — one `UPDATE … RETURNING`, `ConnectionIntent.Write`,
-   never a replica, partitioned daily and dropped rather than deleted. This is the security-critical
-   path in the whole system: a token redeemable twice is a statement delivered to whoever was
-   forwarded the email. The token is a 256-bit CSPRNG value, **not** a UUIDv7 — see
-   [ADR-0006](docs/adr/0006-uuidv7-primary-keys.md) for why that distinction is load-bearing.
-2. **Close the `TODO(security)` in `SensitiveDataRedactor`** *before* the first token exists.
-   The rules already redact `/v1/d/*` and any field named `token`, `dek`, `kek` or `password`, but
-   they have never been tested against a real token-issuing code path. Redaction that arrives after
-   the feature is redaction that already leaked.
-3. **Encryption and key management** — populate the nullable `wrapped_dek`, `kek_id`, `iv` and
-   `auth_tag` columns and the `customer_key` table that already exist.
-4. **A real `IChainAnchor`** — terminal hashes written to append-only object storage under Object
-   Lock. Until it ships, the audit chain does not defend against a privileged insider, and the
-   README says so above rather than implying otherwise.
-5. **PDF generation, then retention purge and legal hold**, using the `legal_hold` table that is
-   already in the schema.
+| Path | What lives there |
+| --- | --- |
+| `src/Services/` | The four deployables plus the mock ledger — each `Program.cs` is a page |
+| `src/BuildingBlocks/Domain/` | Pure domain: statements, retention decision engine, audit chain definition. References nothing |
+| `src/BuildingBlocks/Persistence/` | Intent-routed connections, repositories, leases, audit writer/verifier. Read its README before writing SQL |
+| `src/BuildingBlocks/Crypto/` | SDP1 framed AEAD, the key hierarchy, the DEK cache |
+| `src/Migrations/` | Forward-only DbUp scripts, V001–V022, with the locking rules in `Scripts/README.md` |
+| `docs/` | THREAT-MODEL, SCALE, COST, LIMITATIONS, DEMO, and `adr/` (index: [docs/adr/README.md](docs/adr/README.md)) |
+| `load/` | k6 scenarios + the seed/export recipe |
+| `tests/` | Unit / Architecture / Security / Integration — the split the CI badge runs |
+| `tools/seed` | Deterministic volume seeding for the SCALE work |
+| `scripts/seed-demo.sh` + `docs/DEMO.md` | The ten-minute live demo |

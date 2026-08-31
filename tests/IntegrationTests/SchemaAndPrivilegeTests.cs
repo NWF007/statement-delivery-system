@@ -25,7 +25,7 @@ public sealed class SchemaAndPrivilegeTests
         List<string> applied = [.. await connection.QueryAsync<string>(
             "SELECT scriptname FROM schemaversions ORDER BY scriptname;").ConfigureAwait(true)];
 
-        applied.Count.ShouldBe(12);
+        applied.Count.ShouldBe(23);
         applied.ShouldContain(name => name.Contains("V001__roles_and_grants", StringComparison.Ordinal));
         applied.ShouldContain(name => name.Contains("V002__distributed_lease", StringComparison.Ordinal));
         applied.ShouldContain(name => name.Contains("V003__partition_helper_functions", StringComparison.Ordinal));
@@ -38,6 +38,17 @@ public sealed class SchemaAndPrivilegeTests
         applied.ShouldContain(name => name.Contains("V010__download_token", StringComparison.Ordinal));
         applied.ShouldContain(name => name.Contains("V011__token_grants", StringComparison.Ordinal));
         applied.ShouldContain(name => name.Contains("V012__audit_verify_grant", StringComparison.Ordinal));
+        applied.ShouldContain(name => name.Contains("V013__customer_key_material", StringComparison.Ordinal));
+        applied.ShouldContain(name => name.Contains("V014__customer_key_cohort_index", StringComparison.Ordinal));
+        applied.ShouldContain(name => name.Contains("V015__statement_content_digest_required", StringComparison.Ordinal));
+        applied.ShouldContain(name => name.Contains("V016__validate_deferred_constraints", StringComparison.Ordinal));
+        applied.ShouldContain(name => name.Contains("V017__statement_runs", StringComparison.Ordinal));
+        applied.ShouldContain(name => name.Contains("V018__retention_lifecycle", StringComparison.Ordinal));
+        applied.ShouldContain(name => name.Contains("V019__statement_visible_index", StringComparison.Ordinal));
+        applied.ShouldContain(name => name.Contains("V020__validate_retention_constraints", StringComparison.Ordinal));
+        applied.ShouldContain(name => name.Contains("V021__legal_hold_customer_scope", StringComparison.Ordinal));
+        applied.ShouldContain(name => name.Contains("V022__erasure_block_bookkeeping", StringComparison.Ordinal));
+        applied.ShouldContain(name => name.Contains("V023__reconciliation_enqueue_grant", StringComparison.Ordinal));
     }
 
     [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]
@@ -71,10 +82,19 @@ public sealed class SchemaAndPrivilegeTests
                 "customer_key",
                 "distributed_lease",
                 "download_token",
+                "erasure_request",       // V018 - the erasure lifecycle
                 "legal_hold",
+                "orphan_report",         // V018 - reconciliation evidence
+                "orphan_sweep_state",    // V018 - resumable orphan walk
                 "outbox",
+                "reconciliation_finding", // V018
+                "reconciliation_run",    // V018
+                "restore_request",       // V018 - archive restore flow
                 "schemaversions",
                 "statement",
+                "statement_run",         // V014 - generation orchestration
+                "statement_run_item",    // V014
+                "storage_tombstone",     // V018 - deletion evidence for the orphan sweep
             ],
             ignoreOrder: true);
     }

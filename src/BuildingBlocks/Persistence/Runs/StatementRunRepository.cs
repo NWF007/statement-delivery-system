@@ -276,7 +276,7 @@ public sealed class StatementRunRepository : IStatementRunRepository
                attempts   = i.attempts + 1
           FROM claimed c
          WHERE i.id = c.id
-        RETURNING i.id, i.account_id, i.attempts, i.trace_parent;
+        RETURNING i.id, i.account_id AS AccountId, i.attempts, i.trace_parent AS TraceParent;
         """;
 
     private const string CreateRunSql = """
@@ -286,19 +286,22 @@ public sealed class StatementRunRepository : IStatementRunRepository
         """;
 
     private const string FindRunByPeriodSql = """
-        SELECT id, period_start, period_end, status, total_items, deadline_at, created_at
+        SELECT id, period_start AS PeriodStart, period_end AS PeriodEnd, status,
+               total_items AS TotalItems, deadline_at AS DeadlineAt, created_at AS CreatedAt
           FROM statement_run
          WHERE period_start = @periodStart AND period_end = @periodEnd;
         """;
 
     private const string FindRunSql = """
-        SELECT id, period_start, period_end, status, total_items, deadline_at, created_at
+        SELECT id, period_start AS PeriodStart, period_end AS PeriodEnd, status,
+               total_items AS TotalItems, deadline_at AS DeadlineAt, created_at AS CreatedAt
           FROM statement_run
          WHERE id = @id;
         """;
 
     private const string ListActiveSql = """
-        SELECT id, period_start, period_end, status, total_items, deadline_at, created_at
+        SELECT id, period_start AS PeriodStart, period_end AS PeriodEnd, status,
+               total_items AS TotalItems, deadline_at AS DeadlineAt, created_at AS CreatedAt
           FROM statement_run
          WHERE status IN ('PLANNING', 'RUNNING', 'PAUSED')
          ORDER BY created_at;
@@ -744,13 +747,13 @@ public sealed class StatementRunRepository : IStatementRunRepository
         await using NpgsqlConnection connection =
             await _connections.OpenAsync(ConnectionIntent.ReadStrong, cancellationToken).ConfigureAwait(false);
 
-        IEnumerable<FailedItem> rows = await connection.QueryAsync<FailedItem>(new CommandDefinition(
+        IEnumerable<FailedItemRow> rows = await connection.QueryAsync<FailedItemRow>(new CommandDefinition(
             ListFailuresSql,
             new { runId, maxAttempts, afterItemId, limit = pageSize },
             commandTimeout: _connections.CommandTimeoutSeconds(ConnectionIntent.ReadStrong),
             cancellationToken: cancellationToken)).ConfigureAwait(false);
 
-        return [.. rows];
+        return [.. rows.Select(static r => r.ToRecord())];
     }
 
     /// <inheritdoc />
@@ -801,6 +804,29 @@ public sealed class StatementRunRepository : IStatementRunRepository
             Id, PeriodStart, PeriodEnd, Status, TotalItems,
             DeadlineAt is { } d ? new DateTimeOffset(d, TimeSpan.Zero) : null,
             new DateTimeOffset(CreatedAt, TimeSpan.Zero));
+    }
+
+    /// <summary>
+    /// Dapper-facing shape: the public record's positional constructor takes DateTimeOffset and
+    /// Dapper materialising timestamptz hands the constructor-matcher a DateTime, so no
+    /// signature matches (see ErasureRepository.RequestRow). Init properties in DateTime,
+    /// converted at the edge.
+    /// </summary>
+    private sealed record FailedItemRow
+    {
+        public long ItemId { get; init; }
+
+        public Guid AccountId { get; init; }
+
+        public int Attempts { get; init; }
+
+        public string? LastError { get; init; }
+
+        public DateTime? FinishedAt { get; init; }
+
+        public FailedItem ToRecord() => new(
+            ItemId, AccountId, Attempts, LastError,
+            FinishedAt is { } finishedAt ? new DateTimeOffset(finishedAt, TimeSpan.Zero) : null);
     }
 
     private sealed record ClaimRow

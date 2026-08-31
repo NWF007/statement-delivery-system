@@ -16,7 +16,7 @@ namespace Generation.Worker;
 /// THE TRANSPORT IS A LOGGING SINK, AND THAT IS DELIBERATE, NOT UNFINISHED. The outbox pattern's
 /// hard part - atomicity with the business write, at-least-once delivery, ordered draining,
 /// observable lag - is all here and all real. The easy part, the final send, is one line behind
-/// TODO(transport): nothing in this system consumes the events yet, and standing up a broker
+/// TODO(transport): nothing in this system consumes the events yet (docs/LIMITATIONS.md, "Simulated in local development"), and standing up a broker
 /// nothing reads would be infrastructure theatre. When a consumer arrives, the sink swaps for a
 /// producer without touching the pattern. See ADR-0026.
 /// </para>
@@ -40,7 +40,8 @@ public sealed partial class OutboxRelayService : BackgroundService
     // relays holding the same rows. (At-least-once still applies across crashes: a relay that
     // dies between publish and UPDATE re-publishes on the next tick. Consumers dedup on id.)
     private const string ClaimBatchSql = """
-        SELECT id, created_at, event_type, payload::text AS payload, trace_parent
+        SELECT id, created_at AS CreatedAt, event_type AS EventType,
+               payload::text AS payload, trace_parent AS TraceParent
           FROM outbox
          WHERE published_at IS NULL
          ORDER BY created_at, id
@@ -163,7 +164,7 @@ public sealed partial class OutboxRelayService : BackgroundService
 
         foreach (OutboxRow row in batch)
         {
-            // TODO(transport): the send. Today the sink is the structured log - the pattern is
+            // TODO(transport): the send (docs/LIMITATIONS.md, "Next" item 5). Today the sink is the structured log - the pattern is
             // proven, the transport swaps in behind this one line when a consumer exists.
             LogEventPublished(_logger, row.EventType, row.Id, row.TraceParent);
         }
