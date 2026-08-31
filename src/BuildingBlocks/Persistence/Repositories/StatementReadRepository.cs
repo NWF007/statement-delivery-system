@@ -29,8 +29,10 @@ public sealed class StatementReadRepository : IStatementReadRepository
     // Explicit column list, never SELECT *. Adding a column to `statement` must not silently change
     // the shape of this result.
     private const string Columns = """
-        id, account_id, customer_id, period_start, period_end, version, status,
-        storage_key, storage_tier, size_bytes, retain_until, generated_at, purged_at
+        id, account_id AS AccountId, customer_id AS CustomerId, period_start AS PeriodStart,
+        period_end AS PeriodEnd, version, status, storage_key AS StorageKey,
+        storage_tier AS StorageTier, size_bytes AS SizeBytes, retain_until AS RetainUntil,
+        generated_at AS GeneratedAt, purged_at AS PurgedAt
         """;
 
     // THE CRYPTO COLUMNS ARE ON THE SINGLE-ROW LOOKUP ONLY, NEVER ON THE LIST.
@@ -43,7 +45,8 @@ public sealed class StatementReadRepository : IStatementReadRepository
     // The single-row lookup is the download path. It fetches exactly the one envelope it is about to
     // use, for exactly the one object it is about to open.
     private const string FindColumns = $"""
-        {Columns}, content_sha256, wrapped_dek, dek_algorithm, kek_id
+        {Columns}, content_sha256 AS ContentSha256, wrapped_dek AS WrappedDek,
+        dek_algorithm AS DekAlgorithm, kek_id AS KekId
         """;
 
     private const string FindSql = $"""

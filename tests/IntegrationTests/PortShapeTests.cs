@@ -123,7 +123,12 @@ public sealed class PortShapeTests
             second.ChainId.ShouldBe(chainId);
             second.Seq.ShouldBe(first.Seq + 1, "the second append must build on the first, inside the same transaction");
 
-            var verifier = new PostgresAuditVerifier(factory);
+            // Verification reads the chain, and V012 grants that SELECT to app_delivery (the
+            // verify endpoint's host) - the generation role can only append.
+            NpgsqlConnectionFactory verifyFactory = _postgres.ConnectionFactoryFor("app_delivery");
+            await using System.Runtime.CompilerServices.ConfiguredAsyncDisposable _1 =
+                verifyFactory.ConfigureAwait(true);
+            var verifier = new PostgresAuditVerifier(verifyFactory);
             ChainVerification verification = await verifier
                 .VerifyChainAsync(chainId, 1, second.Seq, ct).ConfigureAwait(true);
             verification.Verified.ShouldBeTrue("two same-transaction appends must leave the chain intact");

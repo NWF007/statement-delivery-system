@@ -93,7 +93,7 @@ public sealed class GenerationWorkerFactory : WebApplicationFactory<GenerationWo
                 ["Lease:TimeToLiveSeconds"] = "10",
                 ["Cache:ConnectionString"] = string.Empty,
                 ["OTEL_EXPORTER_OTLP_ENDPOINT"] = string.Empty,
-            }.Concat(_settings.Select(s => new KeyValuePair<string, string?>(s.Key, s.Value)))));
+            }.OverriddenBy(_settings)));
 
         // Route the ledger client's transport into the in-process mock. Registered in
         // ConfigureTestServices so it wins; the resilience handler added by AddLedgerClient is
@@ -159,5 +159,25 @@ public sealed class MutableLedgerFactory : WebApplicationFactory<MockLedger.Api.
                 OnReload();
             }
         }
+    }
+}
+
+/// <summary>Dictionary merge where the per-test settings replace the factory defaults.</summary>
+/// <remarks>
+/// Not <c>Concat</c>: <c>AddInMemoryCollection</c> copies the pairs into a dictionary with
+/// <c>Add</c> semantics, so a test overriding a default (say <c>Generation:ClaimBatchSize</c>)
+/// produced "an item with the same key has already been added" instead of an override.
+/// </remarks>
+internal static class TestConfigurationMerge
+{
+    public static Dictionary<string, string?> OverriddenBy(
+        this Dictionary<string, string?> defaults, IEnumerable<(string Key, string? Value)> overrides)
+    {
+        foreach ((string key, string? value) in overrides)
+        {
+            defaults[key] = value;
+        }
+
+        return defaults;
     }
 }

@@ -402,7 +402,9 @@ public sealed class RetentionLifecycleTests
 
         using Harness harness = CreateHarness();
 
-        var unitOfWork = new NpgsqlUnitOfWork(harness.Factory);
+        // As app_delivery: scheduling and cancelling are the DPO endpoint's acts (V018 grants
+        // INSERT on erasure_request to the API role alone).
+        var unitOfWork = new NpgsqlUnitOfWork(harness.DeliveryFactory);
         await unitOfWork.ExecuteAsync(
             async (NpgsqlTransaction tx, CancellationToken token) =>
                 _ = await harness.Erasures.ScheduleAsync(
@@ -449,7 +451,10 @@ public sealed class RetentionLifecycleTests
         }
 
         var restoreId = Guid.CreateVersion7();
-        var unitOfWork = new NpgsqlUnitOfWork(harness.Factory);
+
+        // As app_delivery: a restore request is created by the customer-facing API (V018 gives
+        // INSERT on restore_request to it alone; the worker only completes and expires them).
+        var unitOfWork = new NpgsqlUnitOfWork(harness.DeliveryFactory);
         await unitOfWork.ExecuteAsync(
             (NpgsqlTransaction tx, CancellationToken token) =>
                 harness.Restores.CreateAsync(

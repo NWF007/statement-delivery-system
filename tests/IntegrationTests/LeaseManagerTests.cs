@@ -118,7 +118,9 @@ public sealed class LeaseManagerTests
         await using (NpgsqlConnection connection = await _postgres.OpenAdminAsync(cancellationToken).ConfigureAwait(true))
         {
             _ = await connection.ExecuteAsync(
-                "UPDATE distributed_lease SET expires_at = now() - interval '1 second' WHERE lease_name = @lease;",
+                // Both columns move: ck_distributed_lease_expiry pins expires_at > acquired_at,
+                // exactly as real elapsed time would leave them.
+                "UPDATE distributed_lease SET acquired_at = now() - interval '11 seconds', expires_at = now() - interval '1 second' WHERE lease_name = @lease;",
                 new { lease }).ConfigureAwait(true);
         }
 

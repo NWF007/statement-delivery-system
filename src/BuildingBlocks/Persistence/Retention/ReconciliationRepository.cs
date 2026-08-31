@@ -147,10 +147,12 @@ public sealed class ReconciliationRepository
         await using NpgsqlConnection connection =
             await _connections.OpenAsync(ConnectionIntent.Write, cancellationToken).ConfigureAwait(false);
 
-        return await connection.QuerySingleOrDefaultAsync<ReconciliationRunRow>(new CommandDefinition(
+        RunRow? row = await connection.QuerySingleOrDefaultAsync<RunRow>(new CommandDefinition(
             ClaimNextSql,
             commandTimeout: _connections.CommandTimeoutSeconds(ConnectionIntent.Write),
             cancellationToken: cancellationToken)).ConfigureAwait(false);
+
+        return row?.ToRecord();
     }
 
     /// <summary>Records one finding.</summary>
@@ -219,10 +221,12 @@ public sealed class ReconciliationRepository
         await using NpgsqlConnection connection =
             await _connections.OpenAsync(ConnectionIntent.ReadStrong, cancellationToken).ConfigureAwait(false);
 
-        return await connection.QuerySingleOrDefaultAsync<ReconciliationRunRow>(new CommandDefinition(
+        RunRow? row = await connection.QuerySingleOrDefaultAsync<RunRow>(new CommandDefinition(
             LatestRunSql,
             commandTimeout: _connections.CommandTimeoutSeconds(ConnectionIntent.ReadStrong),
             cancellationToken: cancellationToken)).ConfigureAwait(false);
+
+        return row?.ToRecord();
     }
 
     /// <summary>Check 6: destroyed keys still holding material, and statements of destroyed customers still holding DEKs.</summary>
@@ -281,5 +285,32 @@ public sealed class ReconciliationRepository
                 cancellationToken: cancellationToken)).ConfigureAwait(false);
 
         return [.. rows];
+    }
+    /// <summary>
+    /// Dapper-facing shape: the public record's positional constructor takes DateTimeOffset and
+    /// Dapper materialising timestamptz hands the constructor-matcher a DateTime, so no
+    /// signature matches (see ErasureRepository.RequestRow). Init properties in DateTime,
+    /// converted at the edge.
+    /// </summary>
+    private sealed record RunRow
+    {
+        public Guid Id { get; init; }
+
+        public string? RequestedBy { get; init; }
+
+        public DateTime RequestedAt { get; init; }
+
+        public DateTime? StartedAt { get; init; }
+
+        public DateTime? CompletedAt { get; init; }
+
+        public string Status { get; init; } = string.Empty;
+
+        public ReconciliationRunRow ToRecord() => new(
+            Id, RequestedBy,
+            new DateTimeOffset(RequestedAt, TimeSpan.Zero),
+            StartedAt is { } startedAt ? new DateTimeOffset(startedAt, TimeSpan.Zero) : null,
+            CompletedAt is { } completedAt ? new DateTimeOffset(completedAt, TimeSpan.Zero) : null,
+            Status);
     }
 }

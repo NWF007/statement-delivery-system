@@ -747,13 +747,13 @@ public sealed class StatementRunRepository : IStatementRunRepository
         await using NpgsqlConnection connection =
             await _connections.OpenAsync(ConnectionIntent.ReadStrong, cancellationToken).ConfigureAwait(false);
 
-        IEnumerable<FailedItem> rows = await connection.QueryAsync<FailedItem>(new CommandDefinition(
+        IEnumerable<FailedItemRow> rows = await connection.QueryAsync<FailedItemRow>(new CommandDefinition(
             ListFailuresSql,
             new { runId, maxAttempts, afterItemId, limit = pageSize },
             commandTimeout: _connections.CommandTimeoutSeconds(ConnectionIntent.ReadStrong),
             cancellationToken: cancellationToken)).ConfigureAwait(false);
 
-        return [.. rows];
+        return [.. rows.Select(static r => r.ToRecord())];
     }
 
     /// <inheritdoc />
@@ -804,6 +804,29 @@ public sealed class StatementRunRepository : IStatementRunRepository
             Id, PeriodStart, PeriodEnd, Status, TotalItems,
             DeadlineAt is { } d ? new DateTimeOffset(d, TimeSpan.Zero) : null,
             new DateTimeOffset(CreatedAt, TimeSpan.Zero));
+    }
+
+    /// <summary>
+    /// Dapper-facing shape: the public record's positional constructor takes DateTimeOffset and
+    /// Dapper materialising timestamptz hands the constructor-matcher a DateTime, so no
+    /// signature matches (see ErasureRepository.RequestRow). Init properties in DateTime,
+    /// converted at the edge.
+    /// </summary>
+    private sealed record FailedItemRow
+    {
+        public long ItemId { get; init; }
+
+        public Guid AccountId { get; init; }
+
+        public int Attempts { get; init; }
+
+        public string? LastError { get; init; }
+
+        public DateTime? FinishedAt { get; init; }
+
+        public FailedItem ToRecord() => new(
+            ItemId, AccountId, Attempts, LastError,
+            FinishedAt is { } finishedAt ? new DateTimeOffset(finishedAt, TimeSpan.Zero) : null);
     }
 
     private sealed record ClaimRow

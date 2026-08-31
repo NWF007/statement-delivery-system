@@ -188,9 +188,26 @@ public sealed partial class QueryDisciplineTests
                      .OrderBy(p => p, StringComparer.Ordinal))
         {
             string text = File.ReadAllText(path);
+
+            // Interpolated fragments hid the fifth instance of the mapping bug: a shared
+            // `Columns` fragment carried the unaliased list, and the literal that had the
+            // SELECT..FROM shape only showed {Columns}. Known same-file const fragments are
+            // inlined before scanning so a column list cannot escape the rule by extraction.
+            var fragments = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (Match constant in SqlConstant().Matches(text))
+            {
+                fragments[constant.Groups[1].Value] = constant.Groups[2].Value;
+            }
+
             foreach (Match match in RawStringLiteral().Matches(text))
             {
-                yield return (Path.GetRelativePath(SolutionGraph.RepositoryRoot, path), match.Groups[1].Value);
+                string sql = match.Groups[1].Value;
+                foreach ((string name, string body) in fragments)
+                {
+                    sql = sql.Replace("{" + name + "}", body, StringComparison.Ordinal);
+                }
+
+                yield return (Path.GetRelativePath(SolutionGraph.RepositoryRoot, path), sql);
             }
         }
     }
@@ -299,6 +316,9 @@ public sealed partial class QueryDisciplineTests
 
     [GeneratedRegex("\"\"\"(.*?)\"\"\"", RegexOptions.Singleline | RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 2000)]
     private static partial Regex RawStringLiteral();
+
+    [GeneratedRegex(@"const\s+string\s+(\w+)\s*=\s*\$?""""""(.*?)""""""", RegexOptions.Singleline | RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 2000)]
+    private static partial Regex SqlConstant();
 
     [GeneratedRegex(@"\bSELECT\s+(?:DISTINCT\s+)?(.*?)\s+FROM\b", RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 2000)]
     private static partial Regex SelectList();

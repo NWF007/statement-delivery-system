@@ -22,6 +22,20 @@ namespace UnitTests.Crypto;
 /// frames tests exactly the same code that runs at 64 KiB.
 /// </para>
 /// </remarks>
+/// <summary>
+/// Runs alone: the two 200 MB tests measure the MANAGED HEAP DELTA across the operation, and any
+/// collection running in parallel donates its allocations (QuestPDF's static font and layout
+/// caches alone are tens of MB) to the "after" reading. The first full CI execution showed the
+/// delta at ~68 MB with parallel neighbours and ~200 KB alone - same code, same bound.
+/// </summary>
+[CollectionDefinition(Name, DisableParallelization = true)]
+public sealed class MemoryMeasurementCollection
+{
+    /// <summary>The collection name.</summary>
+    public const string Name = "memory-measurement";
+}
+
+[Collection(MemoryMeasurementCollection.Name)]
 public sealed class FramedCipherTests
 {
     private const int SmallFrame = 64;

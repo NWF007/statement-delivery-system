@@ -79,12 +79,13 @@ public sealed partial class MigrationScriptTests
                      "V020__validate_retention_constraints",
                      "V021__legal_hold_customer_scope",
                      "V022__erasure_block_bookkeeping",
+                     "V023__reconciliation_enqueue_grant",
                  ])
         {
             names.ShouldContain(name => name.Contains(expected, StringComparison.Ordinal));
         }
 
-        names.Count.ShouldBe(22);
+        names.Count.ShouldBe(23);
     }
 
     [Fact]
