@@ -40,7 +40,8 @@ public sealed partial class OutboxRelayService : BackgroundService
     // relays holding the same rows. (At-least-once still applies across crashes: a relay that
     // dies between publish and UPDATE re-publishes on the next tick. Consumers dedup on id.)
     private const string ClaimBatchSql = """
-        SELECT id, created_at, event_type, payload::text AS payload, trace_parent
+        SELECT id, created_at AS CreatedAt, event_type AS EventType,
+               payload::text AS payload, trace_parent AS TraceParent
           FROM outbox
          WHERE published_at IS NULL
          ORDER BY created_at, id

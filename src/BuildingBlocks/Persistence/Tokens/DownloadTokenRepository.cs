@@ -177,7 +177,8 @@ public sealed class DownloadTokenRepository : IDownloadTokenRepository
           AND  expires_at   > now()
           AND  consumed_at  IS NULL
           AND  revoked_at   IS NULL
-        RETURNING id, statement_id, customer_id, statement_period, expires_at;
+        RETURNING id, statement_id AS StatementId, customer_id AS CustomerId,
+                  statement_period AS StatementPeriod, expires_at AS ExpiresAt;
         """;
 
     /// <summary>
@@ -194,9 +195,9 @@ public sealed class DownloadTokenRepository : IDownloadTokenRepository
     /// </para>
     /// </remarks>
     private const string DiagnoseSql = """
-        SELECT consumed_at IS NOT NULL AS was_consumed,
-               revoked_at  IS NOT NULL AS was_revoked,
-               expires_at <= now()     AS was_expired
+        SELECT consumed_at IS NOT NULL AS WasConsumed,
+               revoked_at  IS NOT NULL AS WasRevoked,
+               expires_at <= now()     AS WasExpired
           FROM download_token
          WHERE token_sha256 = @hash
          LIMIT 1;

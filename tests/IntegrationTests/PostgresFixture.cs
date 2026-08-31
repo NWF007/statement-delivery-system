@@ -127,6 +127,21 @@ public sealed class PostgresFixture : IAsyncLifetime
         analyze.CommandText = "ANALYZE;";
         _ = await analyze.ExecuteNonQueryAsync().ConfigureAwait(false);
 
+        // V001 caps connections per role (app_generation at 40) so that a service bypassing
+        // PgBouncer fails loudly instead of exhausting backends. These tests ARE that bypass, on
+        // purpose: there is no pooler in the container, xUnit runs collections in parallel, and
+        // the claim-contention tests alone open fifty direct connections as one role. The caps
+        // stay in the schema the compose stack and production run under; this container lifts
+        // them because here the "misconfigured fleet" is the test harness itself.
+        await using NpgsqlCommand uncap = connection.CreateCommand();
+        uncap.CommandText = """
+            ALTER ROLE app_delivery   CONNECTION LIMIT -1;
+            ALTER ROLE app_download   CONNECTION LIMIT -1;
+            ALTER ROLE app_generation CONNECTION LIMIT -1;
+            ALTER ROLE app_retention  CONNECTION LIMIT -1;
+            """;
+        _ = await uncap.ExecuteNonQueryAsync().ConfigureAwait(false);
+
         Started = true;
     }
 

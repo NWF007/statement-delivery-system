@@ -276,7 +276,7 @@ public sealed class StatementRunRepository : IStatementRunRepository
                attempts   = i.attempts + 1
           FROM claimed c
          WHERE i.id = c.id
-        RETURNING i.id, i.account_id, i.attempts, i.trace_parent;
+        RETURNING i.id, i.account_id AS AccountId, i.attempts, i.trace_parent AS TraceParent;
         """;
 
     private const string CreateRunSql = """
@@ -286,19 +286,22 @@ public sealed class StatementRunRepository : IStatementRunRepository
         """;
 
     private const string FindRunByPeriodSql = """
-        SELECT id, period_start, period_end, status, total_items, deadline_at, created_at
+        SELECT id, period_start AS PeriodStart, period_end AS PeriodEnd, status,
+               total_items AS TotalItems, deadline_at AS DeadlineAt, created_at AS CreatedAt
           FROM statement_run
          WHERE period_start = @periodStart AND period_end = @periodEnd;
         """;
 
     private const string FindRunSql = """
-        SELECT id, period_start, period_end, status, total_items, deadline_at, created_at
+        SELECT id, period_start AS PeriodStart, period_end AS PeriodEnd, status,
+               total_items AS TotalItems, deadline_at AS DeadlineAt, created_at AS CreatedAt
           FROM statement_run
          WHERE id = @id;
         """;
 
     private const string ListActiveSql = """
-        SELECT id, period_start, period_end, status, total_items, deadline_at, created_at
+        SELECT id, period_start AS PeriodStart, period_end AS PeriodEnd, status,
+               total_items AS TotalItems, deadline_at AS DeadlineAt, created_at AS CreatedAt
           FROM statement_run
          WHERE status IN ('PLANNING', 'RUNNING', 'PAUSED')
          ORDER BY created_at;

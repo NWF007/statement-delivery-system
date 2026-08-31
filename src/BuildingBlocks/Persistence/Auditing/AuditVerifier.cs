@@ -51,9 +51,20 @@ public sealed class PostgresAuditVerifier : IAuditVerifier
     // would start returning new columns to a recomputation that does not know about them, and the
     // chain would fail to verify for a reason that looks exactly like tampering.
     private const string ReadChainSql = """
-        SELECT chain_seq, id, statement_id, customer_id, actor_type, actor_id,
-               action, outcome, denial_reason_code, host(source_ip) AS source_ip,
-               user_agent_hash, context::text AS context, occurred_at, prev_hash, hash
+        SELECT chain_seq            AS ChainSeq,
+               id,
+               statement_id         AS StatementId,
+               customer_id          AS CustomerId,
+               actor_type           AS ActorType,
+               actor_id             AS ActorId,
+               action, outcome,
+               denial_reason_code   AS DenialReasonCode,
+               host(source_ip)      AS SourceIp,
+               user_agent_hash      AS UserAgentHash,
+               context::text        AS context,
+               occurred_at          AS OccurredAt,
+               prev_hash            AS PrevHash,
+               hash
           FROM audit_event
          WHERE chain_id = @chainId
            AND chain_seq >= @fromSeq

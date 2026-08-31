@@ -148,7 +148,13 @@ services:
       - -c
       - |
         set -e
-        umask 077
+        # 0644, not umask 077: this container writes as root, but the pgbouncer image runs as
+        # an unprivileged user, and 0600 root-owned meant "Permission denied" on the auth_file -
+        # PgBouncer then knew no users at all and every client got "SASL authentication failed"
+        # (found by the CI stack's first readiness probe). The volume is not host-mounted and
+        # holds local-dev placeholder credentials; production does not ship credentials on a
+        # compose volume at all (see docs/LIMITATIONS.md).
+        umask 022
         cat > /userlist/userlist.txt <<USERLIST
         "app_delivery" "$${APP_DELIVERY_PASSWORD}"
         "app_download" "$${APP_DOWNLOAD_PASSWORD}"

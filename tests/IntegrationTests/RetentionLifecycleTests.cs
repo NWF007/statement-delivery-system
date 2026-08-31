@@ -921,6 +921,9 @@ public sealed class RetentionLifecycleTests
     {
         public required NpgsqlConnectionFactory Factory { get; init; }
 
+        /// <summary>The API's role, for acts the design assigns to it - scheduling erasures.</summary>
+        public required NpgsqlConnectionFactory DeliveryFactory { get; init; }
+
         public required RetentionSweepRepository Statements { get; init; }
 
         public required LegalHoldRepository Holds { get; init; }
@@ -1011,6 +1014,7 @@ public sealed class RetentionLifecycleTests
         return new Harness
         {
             Factory = factory,
+            DeliveryFactory = _postgres.ConnectionFactoryFor("app_delivery"),
             Statements = statements,
             Holds = holds,
             Erasures = erasures,
@@ -1189,7 +1193,10 @@ public sealed class RetentionLifecycleTests
     private static async Task ScheduleErasureAsync(
         Harness harness, Guid customerId, DateTimeOffset dueAt, CancellationToken ct)
     {
-        var unitOfWork = new NpgsqlUnitOfWork(harness.Factory);
+        // Runs as app_delivery, the way the real DPO endpoint does: V018 grants INSERT on
+        // erasure_request to the API role alone, and the retention role's 42501 on the first
+        // real execution was this helper impersonating the wrong actor.
+        var unitOfWork = new NpgsqlUnitOfWork(harness.DeliveryFactory);
         bool armed = false;
         await unitOfWork.ExecuteAsync(
             async (NpgsqlTransaction tx, CancellationToken token) =>

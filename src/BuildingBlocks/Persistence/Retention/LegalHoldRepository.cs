@@ -44,7 +44,7 @@ public sealed class LegalHoldRepository
         UPDATE legal_hold
            SET released_at = now(), released_by = @releasedBy, release_reason = @releaseReason
          WHERE id = @id AND released_at IS NULL
-        RETURNING statement_id, customer_id, case_reference;
+        RETURNING statement_id AS StatementId, customer_id AS CustomerId, case_reference AS CaseReference;
         """;
 
     private const string FindSql = """

@@ -67,7 +67,8 @@ public sealed class PostgresAuditWriter : IAuditWriter
     /// </para>
     /// </remarks>
     private const string LockHeadSql = """
-        SELECT last_seq, last_hash
+        SELECT last_seq  AS LastSeq,
+               last_hash AS LastHash
           FROM audit_chain_head
          WHERE chain_id = @chainId
            FOR UPDATE;

@@ -83,7 +83,7 @@ public sealed class GenerationWorkerFactory : WebApplicationFactory<GenerationWo
 
                 // Tight loops so tests observe transitions in seconds, not minutes.
                 ["Generation:PollIntervalSeconds"] = "1",
-                ["Generation:MonitorIntervalSeconds"] = "1",
+                ["Generation:MonitorIntervalSeconds"] = "5", // the options floor; 1 fails Range validation and the host never starts
                 ["Generation:ClaimBatchSize"] = "10",
                 ["Generation:RenderParallelism"] = "4",
                 ["Generation:MaxAttempts"] = "3",
