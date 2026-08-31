@@ -77,7 +77,8 @@ public sealed class PostgresFixture : IAsyncLifetime
     /// pool would admit - and a connection-pool timeout would look exactly like the lock contention
     /// those tests exist to measure.
     /// </param>
-    public NpgsqlConnectionFactory ConnectionFactoryFor(string role, int maxPoolSize = 5, int writeTimeoutSeconds = 30)
+    public NpgsqlConnectionFactory ConnectionFactoryFor(
+        string role, int maxPoolSize = 5, int writeTimeoutSeconds = 30, int connectTimeoutSeconds = 5)
     {
         var options = new PostgresOptions
         {
@@ -86,6 +87,7 @@ public sealed class PostgresFixture : IAsyncLifetime
             MaxPoolSize = maxPoolSize,
             MinPoolSize = 0,
             WriteCommandTimeoutSeconds = writeTimeoutSeconds,
+            ConnectTimeoutSeconds = connectTimeoutSeconds,
 
             // Auto-prepare off in tests. These connect directly rather than through PgBouncer, and
             // several tests deliberately reuse the same statement text against different roles.

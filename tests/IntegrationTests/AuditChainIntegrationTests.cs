@@ -98,8 +98,11 @@ public sealed class AuditChainIntegrationTests
         // The write timeout is sized to the test's own queue: fifty appends serialise on one
         // chain head by design, so the last writer legitimately waits for the other forty-nine,
         // and on a loaded runner that tail exceeds the default thirty seconds.
+        // Connect timeout too: fifty simultaneous TCP-plus-SCRAM handshakes against a container
+        // on a two-core runner queue behind each other, and the tail outlives the default five
+        // seconds even after the bootstrap pre-warm.
         NpgsqlConnectionFactory factory = _postgres.ConnectionFactoryFor(
-            "app_generation", maxPoolSize: 60, writeTimeoutSeconds: 120);
+            "app_generation", maxPoolSize: 60, writeTimeoutSeconds: 120, connectTimeoutSeconds: 60);
         await using (factory.ConfigureAwait(false))
         {
             PostgresAuditWriter writer = Writer(factory);
