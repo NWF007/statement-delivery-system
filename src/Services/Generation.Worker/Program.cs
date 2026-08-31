@@ -1,7 +1,9 @@
 using Generation.Worker;
 using Generation.Worker.Configuration;
+using Generation.Worker.Ledger;
 using StatementDelivery.Crypto;
 using StatementDelivery.Persistence;
+using StatementDelivery.Rendering;
 using StatementDelivery.ServiceDefaults;
 using StatementDelivery.ServiceDefaults.HealthChecks;
 using StatementDelivery.ServiceDefaults.Storage;
@@ -22,6 +24,15 @@ builder.AddServiceDefaults();
 builder.AddPersistence(serviceName: "generation-worker");
 builder.AddObjectStorage();
 builder.AddCrypto();
+builder.AddStatementRendering();
+builder.AddLedgerClient();
+
+// The outbox WRITE half: statement.available lands in the outbox inside the render's finalize
+// transaction; the relay hosted below is the read half.
+builder.Services.AddSingleton<
+    StatementDelivery.Messaging.IIntegrationEventPublisher,
+    StatementDelivery.Messaging.Outbox.OutboxEventPublisher>();
+
 builder.AddGenerationWorker();
 
 // includeWriter: true. This is the only service that may WRITE statement content - it is the one

@@ -149,7 +149,7 @@ public sealed class EnvironmentGuardTests
     private sealed class UnusedKeyBroker : StatementDelivery.Crypto.Keys.IDataKeyBroker
     {
         public Task<StatementDelivery.Crypto.Keys.DataKeyLease> AcquireAsync(
-            StatementDelivery.Domain.Identifiers.CustomerId customer, long expectedBytes, CancellationToken ct) =>
+            StatementDelivery.Domain.Identifiers.CustomerId customer, CancellationToken ct) =>
             throw new NotSupportedException();
 
         public Task<StatementDelivery.Crypto.Keys.DataKey> UnwrapDekAsync(

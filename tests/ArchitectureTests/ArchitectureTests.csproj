@@ -36,6 +36,9 @@
     <ProjectReference Include="..\..\src\Services\Generation.Worker\Generation.Worker.csproj" />
     <ProjectReference Include="..\..\src\Services\Retention.Worker\Retention.Worker.csproj" />
     <ProjectReference Include="..\..\src\Migrations\Db.Migrator\Db.Migrator.csproj" />
+    <ProjectReference Include="..\..\src\BuildingBlocks\Rendering\Rendering.csproj" />
+    <ProjectReference Include="..\..\src\Services\MockLedger.Api\MockLedger.Api.csproj" />
+    <ProjectReference Include="..\..\tools\renderhash\RenderHash.csproj" />
   </ItemGroup>
 
 </Project>

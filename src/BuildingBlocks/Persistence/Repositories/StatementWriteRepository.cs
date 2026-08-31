@@ -33,6 +33,14 @@ public sealed class StatementWriteRepository : IStatementWriteRepository
     // own tag, so there is no single IV to record and nothing truthful to put here. Writing them
     // explicitly rather than omitting them keeps a stale value from a previous generation of the
     // same statement from surviving into a row that no longer means it. See ADR-0019.
+    //
+    // THE STATUS PREDICATE IS LOAD-BEARING, added when Prompt 5 wired the first caller (it was
+    // flagged in the Prompts 1-4 audit verification). The domain state machine says AVAILABLE is
+    // reached from PENDING (first render) or FAILED (retry), and that a CORRECTED statement is a
+    // NEW ROW - V006: "what the customer was originally shown remains provable". Without the
+    // predicate, a caller that skips the aggregate could overwrite an already-AVAILABLE row's
+    // envelope in place and every CHECK constraint would smile through it. With it, an illegal
+    // transition matches zero rows and the caller sees rowsAffected == 0 instead of silent damage.
     private const string MarkAvailableSql = """
         UPDATE statement
            SET status         = 'AVAILABLE',
@@ -47,16 +55,20 @@ public sealed class StatementWriteRepository : IStatementWriteRepository
                auth_tag       = NULL,
                generated_at   = @generatedAt
          WHERE id           = @id
-           AND period_start = @periodStart;
+           AND period_start = @periodStart
+           AND status IN ('PENDING', 'FAILED');
         """;
 
     // No storage or crypto columns touched. A failed render produced no bytes, and nulling the
     // columns here would erase the envelope of a PREVIOUS successful generation of the same row.
+    // Same reasoning: FAILED is reached from PENDING (render errored) and nowhere else - a
+    // terminal PURGED row or a live AVAILABLE one must not be flippable to FAILED by a stray call.
     private const string MarkFailedSql = """
         UPDATE statement
            SET status = 'FAILED'
          WHERE id           = @id
-           AND period_start = @periodStart;
+           AND period_start = @periodStart
+           AND status = 'PENDING';
         """;
 
     private readonly IDbConnectionFactoryTimeouts _timeouts;

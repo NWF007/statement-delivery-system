@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
     <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
     <PackageReference Include="NSubstitute" />
     <PackageReference Include="Shouldly" />
@@ -14,6 +15,12 @@
     <ProjectReference Include="..\..\src\BuildingBlocks\ServiceDefaults\ServiceDefaults.csproj" />
     <ProjectReference Include="..\..\src\BuildingBlocks\Messaging\Messaging.csproj" />
     <ProjectReference Include="..\..\src\BuildingBlocks\Contracts\Contracts.csproj" />
+    <ProjectReference Include="..\..\src\BuildingBlocks\Rendering\Rendering.csproj" />
+    <!-- The determinism probe tool, referenced so its binary lands beside the test assembly and
+         Render_AcrossProcessRestart_ProducesIdenticalBytes can launch it as a REAL child process. -->
+    <ProjectReference Include="..\..\tools\renderhash\RenderHash.csproj" />
+    <ProjectReference Include="..\..\src\Services\MockLedger.Api\MockLedger.Api.csproj" />
+    <ProjectReference Include="..\..\src\Services\Generation.Worker\Generation.Worker.csproj" />
   </ItemGroup>
 
 </Project>

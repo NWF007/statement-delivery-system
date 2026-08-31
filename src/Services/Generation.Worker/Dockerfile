@@ -17,6 +17,7 @@ COPY src/BuildingBlocks/Contracts/Contracts.csproj             src/BuildingBlock
 COPY src/BuildingBlocks/Messaging/Messaging.csproj             src/BuildingBlocks/Messaging/
 COPY src/BuildingBlocks/Persistence/Persistence.csproj         src/BuildingBlocks/Persistence/
 COPY src/BuildingBlocks/ServiceDefaults/ServiceDefaults.csproj src/BuildingBlocks/ServiceDefaults/
+COPY src/BuildingBlocks/Rendering/Rendering.csproj               src/BuildingBlocks/Rendering/
 COPY src/Services/Generation.Worker/Generation.Worker.csproj                             src/Services/Generation.Worker/
 RUN dotnet restore src/Services/Generation.Worker/Generation.Worker.csproj
 

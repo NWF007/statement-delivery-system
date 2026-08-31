@@ -374,6 +374,24 @@ services:
     # nothing reads is somewhere stale plaintext sits until someone finds it.
     networks: [statement-delivery]
 
+  # The mock core-banking ledger. A REAL network boundary for the generation fleet's resilience
+  # policies: latency injection, error injection, and a rate limit that answers 429 with
+  # Retry-After. Deliberately references nothing else in this repository.
+  mockledger:
+    build:
+      context: .
+      dockerfile: src/Services/MockLedger.Api/Dockerfile
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      FaultInjection__LatencyMs__P50: "20"
+      FaultInjection__LatencyMs__P99: "200"
+      FaultInjection__ErrorRate: "0.0"
+      FaultInjection__RateLimitPerSecond: "500"
+    ports:
+      - "8083:8080"
+    networks: [statement-delivery]
+
   generation-worker:
     build:
       context: .
@@ -393,6 +411,19 @@ services:
       ObjectStorage__Lock__Mode: GOVERNANCE
       Crypto__KeyProvider: Local
       Crypto__LocalKeys__MasterSecret: ${CRYPTO_MASTER_SECRET}
+      Ledger__BaseUrl: http://mockledger:8080
+      # The licence tier is a legal declaration about the LICENSEE and belongs to the
+      # deployment, not the code. See docs/LICENSING.md.
+      Rendering__License: ${QUESTPDF_LICENSE:-Community}
+      # CIPHERTEXT spool for the encrypt-then-upload path (ADR-0031). Defaults to the OS temp
+      # path inside the container, which is the writable container layer - REAL disk. Never
+      # mount this as tmpfs: tmpfs is RAM, and eight render slots spooling large statements
+      # would compete with the heap the streaming design protects. Peak usage is bounded at
+      # RenderParallelism x largest ciphertext (8 x ~1 MB typical = ~8 MB per replica;
+      # ~80 MB for pathological 10 MB statements). The spool-directory readiness probe fails
+      # the replica if this path is not writable - a read-only filesystem shows up at rollout,
+      # not mid-run. Only ciphertext ever touches it; plaintext PDFs exist in memory only.
+      ObjectStorage__Spool__Directory: /tmp/statement-spool
     # No published ports. This is the service that scales 0 -> 400 at month-end; a host port
     # binding would make the second replica fail to start.
     networks: [statement-delivery]

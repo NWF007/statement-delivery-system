@@ -66,6 +66,17 @@
     <PackageVersion Include="Npgsql.OpenTelemetry" Version="10.0.3" />
   </ItemGroup>
 
+  <!-- ── PDF rendering ────────────────────────────────────────────────────── -->
+  <!-- QuestPDF is DUAL-LICENSED: Community is free below $1M annual gross revenue, measured on
+       the licensee company's TOTAL revenue, not the product's. This project qualifies as an
+       individual portfolio piece; enterprise adoption needs Professional/Enterprise, and the
+       IStatementRenderer port makes PDFsharp (MIT) a single-class migration if procurement
+       objects. Full analysis: docs/LICENSING.md and docs/adr/0028. The licence tier is declared
+       in configuration at startup, never hard-coded. -->
+  <ItemGroup>
+    <PackageVersion Include="QuestPDF" Version="2026.8.0" />
+  </ItemGroup>
+
   <!-- ── Object storage and validation ────────────────────────────────────── -->
   <ItemGroup>
     <PackageVersion Include="AWSSDK.S3" Version="4.0.102.4" />

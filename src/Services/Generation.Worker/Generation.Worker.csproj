@@ -5,6 +5,7 @@
     <ProjectReference Include="..\..\BuildingBlocks\Persistence\Persistence.csproj" />
     <ProjectReference Include="..\..\BuildingBlocks\Messaging\Messaging.csproj" />
     <ProjectReference Include="..\..\BuildingBlocks\Contracts\Contracts.csproj" />
+    <ProjectReference Include="..\..\BuildingBlocks\Rendering\Rendering.csproj" />
   </ItemGroup>
 
 </Project>

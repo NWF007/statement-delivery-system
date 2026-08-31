@@ -74,6 +74,42 @@ public interface IStatementContentWriter
         CancellationToken ct);
 }
 
+/// <summary>Where unknown-length uploads spool their CIPHERTEXT while the length is measured.</summary>
+/// <remarks>
+/// <para>
+/// THE FILE ON DISK IS CIPHERTEXT, NEVER PLAINTEXT - that is the entire reason the spool lives
+/// INSIDE this adapter, after encryption, rather than in the render pipeline before it. A
+/// plaintext spool would put a customer's full statement in cleartext on the container
+/// filesystem: outside the threat model, unrecoverable after a SIGKILL, visible to host
+/// snapshots. The ciphertext file is unreadable without the DEK, which exists only in this
+/// process's memory. See docs/adr/0031-spool-ciphertext-for-unknown-length-uploads.md.
+/// </para>
+/// <para>
+/// MUST BE REAL DISK, NOT tmpfs. A memory-backed mount silently reintroduces the full-object
+/// buffering this design exists to avoid - the compose file says so where the volume would go.
+/// Peak usage per replica is RenderParallelism x the largest ciphertext in flight (ciphertext is
+/// plaintext + ~0.1%): at 8-way parallelism and multi-hundred-transaction statements, plan for
+/// tens of megabytes, not gigabytes.
+/// </para>
+/// </remarks>
+public sealed class SpoolOptions
+{
+    /// <summary>Configuration section name.</summary>
+    public const string SectionName = "ObjectStorage:Spool";
+
+    /// <summary>Gets or sets the spool directory. Defaults to the system temp directory.</summary>
+    /// <remarks>
+    /// A startup readiness check writes and deletes a probe file here and FAILS READINESS if it
+    /// cannot: a worker that cannot spool cannot render, and refusing traffic beats burning three
+    /// attempts per item and quarantining the queue.
+    /// </remarks>
+    public string? Directory { get; set; }
+
+    /// <summary>Resolves the effective directory.</summary>
+    public string EffectiveDirectory =>
+        string.IsNullOrWhiteSpace(Directory) ? Path.GetTempPath() : Directory;
+}
+
 /// <summary>How long written objects are retained.</summary>
 /// <remarks>
 /// Separate from <see cref="ObjectLockOptions"/> because the two answer different questions: that
@@ -176,6 +212,7 @@ public sealed class ObjectLockOptions
 public sealed class S3StatementContentStore : IStatementContentStore, IStatementContentWriter
 {
     private readonly IAmazonS3 _s3;
+    private readonly SpoolOptions _spool;
     private readonly IDataKeyBroker _keys;
     private readonly ObjectStorageOptions _storage;
     private readonly ObjectLockOptions _lock;
@@ -191,6 +228,7 @@ public sealed class S3StatementContentStore : IStatementContentStore, IStatement
     /// <param name="cipher">Cipher options.</param>
     /// <param name="retention">Retention options.</param>
     /// <param name="logger">Logger. A decryption failure is silent to the caller and must not be silent here.</param>
+    /// <param name="spool">Spool configuration for unknown-length uploads.</param>
     public S3StatementContentStore(
         IAmazonS3 s3,
         IDataKeyBroker keys,
@@ -198,8 +236,10 @@ public sealed class S3StatementContentStore : IStatementContentStore, IStatement
         IOptions<ObjectLockOptions> objectLock,
         IOptions<CipherOptions> cipher,
         IOptions<RetentionOptions>? retention = null,
-        ILogger<S3StatementContentStore>? logger = null)
+        ILogger<S3StatementContentStore>? logger = null,
+        IOptions<SpoolOptions>? spool = null)
     {
+        _spool = spool?.Value ?? new SpoolOptions();
         ArgumentNullException.ThrowIfNull(storage);
         ArgumentNullException.ThrowIfNull(objectLock);
         ArgumentNullException.ThrowIfNull(cipher);
@@ -409,13 +449,12 @@ public sealed class S3StatementContentStore : IStatementContentStore, IStatement
                 nameof(kekId));
         }
 
-        // KNOWN AND ACCEPTED: a non-seekable source reports zero, so it consumes none of the data
-        // key's byte budget and the object-count budget alone bounds that key's reuse. Every caller
-        // today hands over a rendered file or a MemoryStream, both seekable. If a streaming renderer
-        // ever appears, this is where the byte budget silently stops applying - so it is written
-        // down here rather than left to be discovered.
-        long expectedBytes = plaintext.CanSeek ? plaintext.Length - plaintext.Position : 0;
-        using DataKeyLease lease = await _keys.AcquireAsync(customer, expectedBytes, ct).ConfigureAwait(false);
+        // No byte estimate: the budget settles with the REAL count after encryption, via
+        // lease.RecordBytes below. The estimate-based predecessor is the reason this comment block
+        // used to carry a "KNOWN AND ACCEPTED" warning about non-seekable sources zeroing the byte
+        // budget - the Prompt 5 streaming renderer walked straight into it (audit HIGH 2), and the
+        // fix was to remove the estimate rather than to improve it.
+        using DataKeyLease lease = await _keys.AcquireAsync(customer, ct).ConfigureAwait(false);
 
         string key = StorageKeyScheme.KeyFor(
             new StatementId(ctx.StatementId), accountId, period, ctx.Version);
@@ -426,44 +465,85 @@ public sealed class S3StatementContentStore : IStatementContentStore, IStatement
         DateOnly retainUntilDate = _retention.RetainUntil(period);
         var retainUntil = new DateTimeOffset(retainUntilDate.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
 
-        await using var encrypting = new FramedEncryptingStream(
-            plaintext, lease.Key.Span, ctx, _cipher.FrameSizeBytes, leaveSourceOpen: true);
+        // =========================================================================================
+        //  ENCRYPT TO A CIPHERTEXT SPOOL, THEN PUT THE SPOOL. One path for every input shape.
+        //
+        //  WHY A SPOOL AT ALL: the AWS SDK refuses a body it cannot measure - a non-seekable
+        //  stream with no Content-Length throws "Could not determine content length" client-side.
+        //  The render pipeline's pipe is exactly that shape, and it broke here (the Prompt 5
+        //  audit's CRITICAL, reproduced by ContentWriterSeamTests before this fix).
+        //
+        //  WHY THE SPOOL IS CIPHERTEXT, NOT PLAINTEXT: spooling upstream in the pipeline would
+        //  put a customer's full statement in cleartext on the container filesystem - outside the
+        //  threat model, surviving SIGKILL, visible to host snapshots. This file is framed AEAD
+        //  output, unreadable without a DEK that exists only in this process's memory. On Linux
+        //  the file is additionally unlinked the moment it is open (see CreateSpool), so even a
+        //  SIGKILL leaves no named file behind. See ADR-0031.
+        //
+        //  WHY ONE PATH FOR SEEKABLE INPUTS TOO: a seekable-input fast path would keep the
+        //  spooled branch exercised only by the callers that need it - which is precisely how the
+        //  original defect survived 364 green tests. One branch means the tested path IS the
+        //  production path, for every caller.
+        //
+        //  The pull-stream (Span-based) rather than the cipher's Memory-based push API, so the
+        //  DEK stays in the lease's pinned, wiped copy and never lands on the ordinary heap.
+        // =========================================================================================
+        long plaintextLength;
+        long ciphertextLength;
+        byte[] digest;
+        FileStream spool = CreateSpool(_spool.EffectiveDirectory);
 
-        var request = new PutObjectRequest
+        await using (spool.ConfigureAwait(false))
         {
-            BucketName = _storage.BucketName,
-            Key = key,
-            InputStream = encrypting,
-            ContentType = "application/octet-stream",
+            // The Span-taking pull stream, so the DEK never leaves the lease's pinned copy - the
+            // cipher's Memory-taking push API would force an unwiped heap copy of key material.
+            await using (var encrypting = new FramedEncryptingStream(
+                plaintext, lease.Key.Span, ctx, _cipher.FrameSizeBytes, leaveSourceOpen: true))
+            {
+                await encrypting.CopyToAsync(spool, _cipher.FrameSizeBytes, ct).ConfigureAwait(false);
 
-            // ⚠ LOCK EXPIRY IS NOT DELETION. When this date passes the object merely becomes
-            // ELIGIBLE for deletion - nothing removes it, and the storage bill continues for as long
-            // as it exists. An explicit purge job is still required (Prompt 6). A system that set a
-            // retention and assumed expiry meant cleanup would pay to store 2.5 billion objects
-            // forever and would believe it had a retention policy.
-            ObjectLockMode = _lock.PutMode,
-            ObjectLockRetainUntilDate = retainUntil.UtcDateTime,
-        };
+                digest = encrypting.PlaintextSha256
+                    ?? throw new InvalidOperationException("Encryption completed without producing a digest.");
+                plaintextLength = encrypting.PlaintextLength;
+                ciphertextLength = encrypting.CiphertextLength;
+            }
 
-        // The encrypting stream is not seekable, so the SDK cannot measure it - but the length is
-        // exactly computable from the plaintext length, so it is declared rather than left to chunked
-        // transfer encoding, which S3-compatible implementations handle inconsistently.
-        if (expectedBytes > 0 || plaintext.CanSeek)
-        {
-            request.Headers.ContentLength =
-                FrameFormat.CiphertextLengthFor(expectedBytes, _cipher.FrameSizeBytes);
+            // Settled HERE, not after the PUT: the key protected these bytes the moment they were
+            // encrypted, whether or not the upload lands. PLAINTEXT bytes - the budget bounds
+            // material protected, and framing overhead is not material.
+            lease.RecordBytes(plaintextLength);
+
+            spool.Position = 0;
+
+            var request = new PutObjectRequest
+            {
+                BucketName = _storage.BucketName,
+                Key = key,
+                InputStream = spool,
+                AutoCloseStream = false,
+                ContentType = "application/octet-stream",
+
+                // ⚠ LOCK EXPIRY IS NOT DELETION. When this date passes the object merely becomes
+                // ELIGIBLE for deletion - nothing removes it, and the storage bill continues for as
+                // long as it exists. An explicit purge job is still required (Prompt 6). A system
+                // that set a retention and assumed expiry meant cleanup would pay to store
+                // 2.5 billion objects forever and would believe it had a retention policy.
+                ObjectLockMode = _lock.PutMode,
+                ObjectLockRetainUntilDate = retainUntil.UtcDateTime,
+            };
+
+            // Always declared, from the spool's REAL length - never inferred, never left to
+            // chunked transfer encoding, which S3-compatible implementations handle inconsistently.
+            request.Headers.ContentLength = ciphertextLength;
+
+            _ = await _s3.PutObjectAsync(request, ct).ConfigureAwait(false);
         }
-
-        _ = await _s3.PutObjectAsync(request, ct).ConfigureAwait(false);
-
-        byte[] digest = encrypting.PlaintextSha256
-            ?? throw new InvalidOperationException("PutObject completed without reading the stream to its end.");
 
         return new StoredObject(
             key,
             "STANDARD",
-            encrypting.PlaintextLength,
-            encrypting.CiphertextLength,
+            plaintextLength,
+            ciphertextLength,
             new CryptoEnvelope(
                 lease.WrappedDek,
                 kekId,
@@ -472,6 +552,47 @@ public sealed class S3StatementContentStore : IStatementContentStore, IStatement
                 new ContentBinding(ctx.StatementId, ctx.CustomerId, ctx.Version)),
             retainUntil);
     }
+
+    /// <summary>
+    /// Opens the ciphertext spool file: delete-on-close, async, and on Linux already unlinked.
+    /// </summary>
+    /// <remarks>
+    /// <c>DeleteOnClose</c> covers every path that disposes the stream - success, exception,
+    /// cancellation. What it does not cover is a process that never disposes anything: SIGKILL, an
+    /// OOM kill, a vanished node - and the generation fleet is explicitly designed to tolerate
+    /// worker death. On Linux the file is therefore DELETED IMMEDIATELY AFTER OPENING: the handle
+    /// stays valid, the directory entry is gone, and the kernel reclaims the blocks the instant
+    /// the process dies, however it dies. Windows cannot unlink an open file without
+    /// <c>FileShare.Delete</c> semantics the rest of the flags fight with, so the dev host keeps
+    /// the named file and relies on DeleteOnClose - acceptable, because production is Linux.
+    /// </remarks>
+    private static FileStream CreateSpool(string directory)
+    {
+        // A configured-but-absent directory (fresh node, wiped temp volume) is created on
+        // demand; a directory that CANNOT be created still throws, and the caller fails the
+        // item rather than spooling somewhere unconfigured.
+        _ = Directory.CreateDirectory(directory);
+
+        string path = Path.Combine(
+            directory,
+            string.Create(CultureInfo.InvariantCulture, $"sdp-spool-{Guid.NewGuid():N}.enc"));
+
+        var stream = new FileStream(
+            path,
+            FileMode.CreateNew,
+            FileAccess.ReadWrite,
+            FileShare.Delete,
+            bufferSize: 81920,
+            FileOptions.DeleteOnClose | FileOptions.Asynchronous);
+
+        if (OperatingSystem.IsLinux())
+        {
+            File.Delete(path);
+        }
+
+        return stream;
+    }
+
 
 }
 
@@ -571,6 +692,71 @@ public sealed class ObjectLockHealthCheck : IHealthCheck
     }
 }
 
+/// <summary>
+/// Readiness: the ciphertext spool directory must be writable, or this worker cannot render.
+/// </summary>
+/// <remarks>
+/// Every write spools through <see cref="SpoolOptions.EffectiveDirectory"/> before its PUT. A
+/// worker that cannot write there fails EVERY item it claims - three attempts each - and
+/// quarantines the queue while reporting itself healthy. Failing readiness instead means it
+/// refuses traffic and a human reads the reason. The probe is a real write-and-delete, not a
+/// permissions guess: on the chiseled runtime image the only proof a directory works is using
+/// it.
+/// </remarks>
+public sealed class SpoolDirectoryHealthCheck : IHealthCheck
+{
+    /// <summary>The registered check name.</summary>
+    public const string Name = "spool-directory";
+
+    private readonly SpoolOptions _spool;
+
+    /// <summary>Initialises a new instance of the <see cref="SpoolDirectoryHealthCheck"/> class.</summary>
+    /// <param name="spool">Spool configuration.</param>
+    public SpoolDirectoryHealthCheck(IOptions<SpoolOptions> spool)
+    {
+        ArgumentNullException.ThrowIfNull(spool);
+        _spool = spool.Value;
+    }
+
+    /// <inheritdoc />
+    public async Task<HealthCheckResult> CheckHealthAsync(
+        HealthCheckContext context, CancellationToken cancellationToken = default)
+    {
+        string directory = _spool.EffectiveDirectory;
+        string probe = Path.Combine(
+            directory,
+            string.Create(CultureInfo.InvariantCulture, $"sdp-spool-probe-{Guid.NewGuid():N}"));
+
+        try
+        {
+            // Creating the directory is part of the probe: a missing-but-creatable path is
+            // writable (the guarantee this check exists for); a read-only filesystem fails here.
+            _ = Directory.CreateDirectory(directory);
+
+            FileStream stream = new(
+                probe, FileMode.CreateNew, FileAccess.Write, FileShare.None,
+                bufferSize: 16, FileOptions.DeleteOnClose | FileOptions.Asynchronous);
+
+            await using (stream.ConfigureAwait(false))
+            {
+                await stream.WriteAsync(new ReadOnlyMemory<byte>([1]), cancellationToken).ConfigureAwait(false);
+                await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            return HealthCheckResult.Healthy(
+                string.Create(CultureInfo.InvariantCulture, $"spool directory writable: {directory}"));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DirectoryNotFoundException)
+        {
+            return HealthCheckResult.Unhealthy(
+                string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"spool directory not writable: {directory}. A worker that cannot spool cannot render, and refusing traffic beats quarantining the queue."),
+                ex);
+        }
+    }
+}
+
 /// <summary>Registers the encrypting object store.</summary>
 public static class EncryptedObjectStoreExtensions
 {
@@ -624,9 +810,21 @@ public static class EncryptedObjectStoreExtensions
         builder.Services.AddSingleton<S3StatementContentStore>();
         builder.Services.AddSingleton<IStatementContentStore>(sp => sp.GetRequiredService<S3StatementContentStore>());
 
+        builder.Services.AddOptions<SpoolOptions>()
+            .Bind(builder.Configuration.GetSection(SpoolOptions.SectionName));
+
         if (includeWriter)
         {
             builder.Services.AddSingleton<IStatementContentWriter>(sp => sp.GetRequiredService<S3StatementContentStore>());
+
+            // Writer-only: the download gateway never spools, and a gateway failing readiness over
+            // a directory it does not use would be a false outage.
+            _ = builder.Services
+                .AddHealthChecks()
+                .AddCheck<SpoolDirectoryHealthCheck>(
+                    SpoolDirectoryHealthCheck.Name,
+                    HealthStatus.Unhealthy,
+                    tags: ["ready", "storage"]);
         }
 
         builder.Services
