@@ -39,6 +39,7 @@ public sealed partial class RunOrchestratorService : BackgroundService
     private readonly IStatementRunRepository _runs;
     private readonly GenerationMetrics _metrics;
     private readonly CircuitBreakerStateProvider _ledgerCircuit;
+    private readonly Ledger.ILedgerClient _ledger;
     private readonly GenerationWorkerOptions _options;
     private readonly TimeProvider _time;
     private readonly ILogger<RunOrchestratorService> _logger;
@@ -51,6 +52,7 @@ public sealed partial class RunOrchestratorService : BackgroundService
     /// <param name="runs">The run store.</param>
     /// <param name="metrics">Batch metrics.</param>
     /// <param name="ledgerCircuit">The ledger breaker's state, for pause decisions.</param>
+    /// <param name="ledger">The ledger client, for the paused-run recovery probe.</param>
     /// <param name="options">Worker options.</param>
     /// <param name="time">Time source.</param>
     /// <param name="logger">Logger.</param>
@@ -59,6 +61,7 @@ public sealed partial class RunOrchestratorService : BackgroundService
         IStatementRunRepository runs,
         GenerationMetrics metrics,
         CircuitBreakerStateProvider ledgerCircuit,
+        Ledger.ILedgerClient ledger,
         IOptions<GenerationWorkerOptions> options,
         TimeProvider time,
         ILogger<RunOrchestratorService> logger)
@@ -69,6 +72,7 @@ public sealed partial class RunOrchestratorService : BackgroundService
         _runs = runs;
         _metrics = metrics;
         _ledgerCircuit = ledgerCircuit;
+        _ledger = ledger;
         _options = options.Value;
         _time = time;
         _logger = logger;
@@ -192,6 +196,16 @@ public sealed partial class RunOrchestratorService : BackgroundService
         // renderer, so it sees a representative ledger. Claim loops on every replica also stop
         // locally on their own breakers; the run-status flip is the operator-facing signal, not
         // the enforcement. ADR-0030 records this honestly.
+        // THE PROBE THAT MAKES RESUME POSSIBLE. Pausing stops render traffic, and a breaker
+        // with no traffic can never observe recovery: the transition out of Open happens on an
+        // execution, and the resume condition below reads Closed. One bounded request per
+        // monitor tick, through the same pipeline the renders use, drives the state machine -
+        // a live ledger closes the breaker; a dead one reopens it and the pause holds.
+        if (run.Status == RunStatus.Paused && _ledgerCircuit.CircuitState != CircuitState.Closed)
+        {
+            _ = await _ledger.ProbeAsync(cancellationToken).ConfigureAwait(false);
+        }
+
         CircuitState circuit = _ledgerCircuit.CircuitState;
 
         if (run.Status == RunStatus.Running && circuit == CircuitState.Open)

@@ -337,12 +337,15 @@ public sealed class DownloadLifecycleTests
 
         long received = 0;
         bool transferFailed = false;
+        HttpStatusCode? observedStatus = null;
 
         try
         {
             using HttpResponseMessage response = await client
                 .GetAsync(Redeem(link.Plaintext), HttpCompletionOption.ResponseHeadersRead, cancellationToken)
                 .ConfigureAwait(true);
+
+            observedStatus = response.StatusCode;
 
             // The headers went out before the corruption was reachable, so this really is a 200.
             response.StatusCode.ShouldBe(HttpStatusCode.OK);
@@ -363,11 +366,23 @@ public sealed class DownloadLifecycleTests
         (transferFailed || received < SizeBytes)
             .ShouldBeTrue($"the transfer delivered all {SizeBytes} bytes cleanly despite a corrupt frame");
 
-        // And it got at least the first frame, or the corruption was not where this test believes it
-        // was and the abort branch was never exercised.
-        (transferFailed ? received : 0).ShouldBeGreaterThan(
-            0,
-            "no bytes were delivered before the failure, so this exercised the pre-response path, not the abort path");
+        // And the ABORT branch is the one exercised, distinguished by STATUS rather than by
+        // delivered bytes: the pre-response path answers a uniform 404
+        // (CorruptedFirstFrame pins that), while this path commits a 200 before the corrupt
+        // frame is reachable. Byte counts cannot make the distinction through TestServer's
+        // in-memory transport - the server can write the whole body and the abort into the
+        // unbounded pipe before the client's read loop is ever scheduled, so a zero here
+        // measures scheduling, not the product.
+        if (observedStatus is { } status)
+        {
+            status.ShouldBe(
+                HttpStatusCode.OK,
+                "a non-200 means the failure was served before the response committed - the pre-response path, not the abort path");
+        }
+        else
+        {
+            transferFailed.ShouldBeTrue("no status and no failure means the request never completed at all");
+        }
 
         Interlocked.Read(ref failures).ShouldBe(1);
 

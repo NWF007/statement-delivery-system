@@ -95,7 +95,11 @@ public sealed class AuditChainIntegrationTests
         // this, the serialisation is correct.
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
 
-        NpgsqlConnectionFactory factory = _postgres.ConnectionFactoryFor("app_generation", maxPoolSize: 60);
+        // The write timeout is sized to the test's own queue: fifty appends serialise on one
+        // chain head by design, so the last writer legitimately waits for the other forty-nine,
+        // and on a loaded runner that tail exceeds the default thirty seconds.
+        NpgsqlConnectionFactory factory = _postgres.ConnectionFactoryFor(
+            "app_generation", maxPoolSize: 60, writeTimeoutSeconds: 120);
         await using (factory.ConfigureAwait(false))
         {
             PostgresAuditWriter writer = Writer(factory);
@@ -305,7 +309,7 @@ public sealed class AuditChainIntegrationTests
             short chainId = AuditHashing.AssignChain(statementId, null);
 
             // A freshly migrated database: every chain sits at its genesis.
-            const long startSeq = 0;
+            const long StartSeq = 0;
 
             for (int i = 0; i < 5; i++)
             {
@@ -318,7 +322,7 @@ public sealed class AuditChainIntegrationTests
                 await transaction.CommitAsync(cancellationToken).ConfigureAwait(true);
             }
 
-            long target = startSeq + 3;
+            long target = StartSeq + 3;
 
             var adminToTamperDb = new NpgsqlConnectionStringBuilder(_postgres.AdminConnectionString)
             {
@@ -340,7 +344,7 @@ public sealed class AuditChainIntegrationTests
 
             var verifier = new PostgresAuditVerifier(TamperDbFactory(generationConnectionString, "app_retention"));
             ChainVerification verification = await verifier
-                .VerifyChainAsync(chainId, 1, startSeq + 5, cancellationToken).ConfigureAwait(true);
+                .VerifyChainAsync(chainId, 1, StartSeq + 5, cancellationToken).ConfigureAwait(true);
 
             verification.Verified.ShouldBeFalse("an altered record must break the chain");
             verification.FirstBrokenSeq.ShouldBe(target, "and the break must be reported at the altered record");
