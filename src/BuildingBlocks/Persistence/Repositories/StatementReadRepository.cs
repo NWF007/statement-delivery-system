@@ -57,6 +57,13 @@ public sealed class StatementReadRepository : IStatementReadRepository
     /// <summary>
     /// First page. No cursor predicate at all, rather than a null-tolerant one.
     /// </summary>
+    /// <!--
+    /// WHY THREE STATUSES (Prompt 6, E4): an ARCHIVED statement must be listable or the restore
+    /// flow is unreachable from the UI, and a PURGED one must appear - with its status and no
+    /// download offered - because "this existed and was destroyed" is a fact the customer is
+    /// entitled to see. PENDING and FAILED stay hidden: unfinished work is not a customer fact.
+    /// Served by idx_statement_customer_period_visible (V018).
+    /// -->
     /// <remarks>
     /// Two statements instead of one with <c>(@cursor IS NULL OR ...)</c>. That form forces the
     /// planner to produce a plan that works for both cases, which in practice means the worse plan
@@ -67,7 +74,7 @@ public sealed class StatementReadRepository : IStatementReadRepository
         SELECT {Columns}
           FROM statement
          WHERE customer_id = @customerId
-           AND status = 'AVAILABLE'
+           AND status IN ('AVAILABLE', 'ARCHIVED', 'PURGED')
            AND period_start >= @from
            AND period_start <  @to
          ORDER BY period_start DESC, id DESC
@@ -87,7 +94,7 @@ public sealed class StatementReadRepository : IStatementReadRepository
         SELECT {Columns}
           FROM statement
          WHERE customer_id = @customerId
-           AND status = 'AVAILABLE'
+           AND status IN ('AVAILABLE', 'ARCHIVED', 'PURGED')
            AND period_start >= @from
            AND period_start <  @to
            AND (period_start, id) < (@cursorPeriod, @cursorId)

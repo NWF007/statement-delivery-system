@@ -57,7 +57,10 @@ public sealed class StatementPublishTests
                 Binding: new ContentBinding(statement.Value, customer.Value, 1));
 
             var location = new StorageLocation(
-                Key: $"statements/{period:yyyy/MM}/{statement.Value:N}.pdf",
+                // The production key constructor, per ADR-0032's rule - a hand-built key here
+                // is one grep away from being copied into a test where the shape matters.
+                Key: StatementDelivery.Domain.Statements.StorageKeyScheme.KeyFor(
+                    statement, account, StatementDelivery.Domain.ValueObjects.StatementPeriod.ForMonth(period.Year, period.Month), 1),
                 Tier: "STANDARD",
                 SizeBytes: 91_234,
                 Envelope: envelope);

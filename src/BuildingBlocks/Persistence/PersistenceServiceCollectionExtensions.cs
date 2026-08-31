@@ -103,6 +103,17 @@ public static class PersistenceServiceCollectionExtensions
         builder.Services.AddSingleton<IDownloadTokenRepository, DownloadTokenRepository>();
         builder.Services.AddSingleton<Runs.IStatementRunRepository, Runs.StatementRunRepository>();
 
+        // The retention lifecycle's adapters (Prompt 6). Registered unconditionally like every
+        // other repository: the ROLE decides what a service can actually do - a delivery replica
+        // resolving LegalHoldRepository cannot purge anything, because app_delivery holds no
+        // UPDATE on statement and no DELETE anywhere.
+        builder.Services.AddSingleton<Retention.LegalHoldRepository>();
+        builder.Services.AddSingleton<Retention.ErasureRepository>();
+        builder.Services.AddSingleton<Retention.RestoreRequestRepository>();
+        builder.Services.AddSingleton<Retention.RetentionSweepRepository>();
+        builder.Services.AddSingleton<Retention.ReconciliationRepository>();
+        builder.Services.AddSingleton<Retention.OrphanSweepRepository>();
+
         // The customer_key adapter behind the Crypto project's port. Registered here rather than in
         // AddCrypto because it is the only piece of the key hierarchy that touches a database, and
         // the composition rule in this repository is that adapters register beside their driver.

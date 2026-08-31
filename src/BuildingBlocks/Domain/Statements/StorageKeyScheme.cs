@@ -32,8 +32,11 @@ namespace StatementDelivery.Domain.Statements;
 /// </remarks>
 public static class StorageKeyScheme
 {
-    /// <summary>The number of distinct leading prefixes: 16^3.</summary>
+    /// <summary>The number of distinct leading prefixes: 16^<see cref="ShardWidth"/>.</summary>
     public const int ShardCount = 4096;
+
+    /// <summary>The shard prefix's width in hex characters. Every consumer that iterates or formats shards derives from THIS, never a local literal - a constant duplicated in two files is how the orphan sweep went blind (audit HIGH 2).</summary>
+    public const int ShardWidth = 3;
 
     /// <summary>The object key suffix. Encrypted content, and the name says so.</summary>
     public const string Extension = ".enc";
@@ -69,6 +72,6 @@ public static class StorageKeyScheme
         Span<byte> hash = stackalloc byte[32];
         _ = SHA256.HashData(bytes, hash);
 
-        return Convert.ToHexStringLower(hash[..2])[..3];
+        return Convert.ToHexStringLower(hash[..2])[..ShardWidth];
     }
 }

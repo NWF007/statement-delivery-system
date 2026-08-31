@@ -3,6 +3,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\BuildingBlocks\ServiceDefaults\ServiceDefaults.csproj" />
     <ProjectReference Include="..\..\BuildingBlocks\Persistence\Persistence.csproj" />
+    <ProjectReference Include="..\..\BuildingBlocks\Messaging\Messaging.csproj" />
+    <ProjectReference Include="..\..\BuildingBlocks\Contracts\Contracts.csproj" />
   </ItemGroup>
 
 </Project>

@@ -155,6 +155,7 @@ public static class DownloadLinkEndpoints
         IssueLinkRequest? request,
         IStatementReadRepository statements,
         IDownloadTokenRepository tokens,
+        StatementDelivery.Persistence.Retention.RestoreRequestRepository restores,
         IUnitOfWork unitOfWork,
         IRandomBytes randomBytes,
         IIdGenerator ids,
@@ -205,6 +206,10 @@ public static class DownloadLinkEndpoints
 
         // Step 3. Specific codes are safe HERE because ownership has already been proven: the
         // caller is entitled to know the state of their own statement.
+        StatementDelivery.Persistence.Retention.RestoreRequestRow? liveRestore = statement.Status == StatementStatus.Archived
+            ? await restores.FindLiveAsync(statement.Id, cancellationToken).ConfigureAwait(false)
+            : null;
+
         switch (statement.Status)
         {
             case StatementStatus.Purged:
@@ -213,11 +218,23 @@ public static class DownloadLinkEndpoints
                     detail: "This statement has passed its retention period and has been destroyed.",
                     statusCode: StatusCodes.Status410Gone);
 
-            case StatementStatus.Archived:
+            case StatementStatus.Archived when liveRestore is null:
                 return Results.Problem(
                     title: "Statement is archived",
                     detail: "This statement is in cold storage. Request a restore before downloading it.",
-                    statusCode: StatusCodes.Status409Conflict);
+                    statusCode: StatusCodes.Status409Conflict,
+                    extensions: new Dictionary<string, object?>(StringComparer.Ordinal)
+                    {
+                        // The endpoint Prompt 3's 409 promised, now real (Prompt 6 Part D).
+                        ["restoreEndpoint"] = string.Create(
+                            CultureInfo.InvariantCulture,
+                            $"/v1/statements/{statement.Id.Value:D}/restore?period={statement.Period.Start:O}"),
+                    });
+
+            case StatementStatus.Archived:
+                // A live restore exists: fall through and issue the link. The gateway re-checks
+                // at download time, so an expiry between link and click still refuses correctly.
+                break;
 
             case StatementStatus.Pending:
             case StatementStatus.Failed:

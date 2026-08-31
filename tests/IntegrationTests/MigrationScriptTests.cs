@@ -74,12 +74,17 @@ public sealed partial class MigrationScriptTests
                      "V015__statement_content_digest_required",
                      "V016__validate_deferred_constraints",
                      "V017__statement_runs",
+                     "V018__retention_lifecycle",
+                     "V019__statement_visible_index",
+                     "V020__validate_retention_constraints",
+                     "V021__legal_hold_customer_scope",
+                     "V022__erasure_block_bookkeeping",
                  ])
         {
             names.ShouldContain(name => name.Contains(expected, StringComparison.Ordinal));
         }
 
-        names.Count.ShouldBe(17);
+        names.Count.ShouldBe(22);
     }
 
     [Fact]

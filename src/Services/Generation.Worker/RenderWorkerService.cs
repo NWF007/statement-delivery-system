@@ -246,6 +246,21 @@ public sealed partial class RenderWorkerService : BackgroundService
             {
                 await _pipeline.ProcessAsync(runId, period, item, workerId, grace.Token).ConfigureAwait(false);
             }
+            catch (StatementDelivery.Domain.Exceptions.CustomerKeyDestroyedException ex)
+            {
+                // Part G: deterministic - the customer's key is destroyed or scheduled, and no
+                // retry changes that. FAILED at the attempts ceiling, so the claim query never
+                // hands the item out again; the run continues.
+                _ = activity?.SetStatus(ActivityStatusCode.Error, ex.GetType().Name);
+                _metrics.ItemFailed(ex.GetType().Name);
+
+                string terminalReason = $"{ex.GetType().Name}: {ex.Message}";
+                _ = await _runs.FailItemTerminallyAsync(
+                    item.ItemId, terminalReason, workerId, _options.MaxAttempts, CancellationToken.None)
+                    .ConfigureAwait(false);
+
+                LogItemFailed(_logger, item.ItemId, item.Attempts, ex.GetType().Name);
+            }
             catch (StaleClaimSupersededException)
             {
                 // Not an item failure: a successor owns the item and is rendering it. Counted on

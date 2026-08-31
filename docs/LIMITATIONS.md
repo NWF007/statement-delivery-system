@@ -111,6 +111,32 @@ The current numbers, as of the RED remediation:
   feature work, and Prompt 6 does not start until `FullRun_1000Accounts` has executed
   somewhere and passed.
 
+### Prompt 6's tests, and their status here
+
+Same split as every round. **Runs on this host, every build:** the 32-row retention decision
+table (plus the named precedence tests), and the crypto-erasure payoff proven through the real
+key hierarchy (`Erasure_MakesStatementPermanentlyUndecryptable`,
+`Erasure_IsIdempotent_SecondDestroyIsANoOp`). **Docker-gated, never executed here:** the twelve
+`RetentionLifecycleTests` (purge ordering and crash-retry, object-lock supremacy, batch bounds,
+dual-layer holds, customer-hold future coverage, erasure execution/re-evaluation/cancellation,
+restore completion with the outbox event, and both reconciliation fault injections) — plus
+migration V018–V020 against a real database. They compile; the Docker-capable host runs them
+first.
+
+### The warm-cache erasure window
+
+`DataKeyCache` holds CEKs for up to `Crypto:DekCache:MaxAge` (default five minutes) and there is
+no cross-process invalidation - eviction on destroy covers only the erasure executor's own
+process, because invalidation across replicas needs a bus this system does not yet have. What
+closes the dangerous path is the DATABASE-side write guard (Part G): `MarkAvailableAsync`
+refuses to publish for a customer whose key is `DESTROYED` or `SCHEDULED_DESTRUCTION`, in the
+same transaction as the publish itself, so a worker with a warm cached CEK cannot land a
+statement that is about to become unreadable. The residual gap is READ-side only - a gateway
+replica could decrypt for up to MaxAge after destruction - and it is closed at the row level
+first: the erasure marks every statement PURGED in the same pass, and the gateway answers 410
+from the row before it ever touches a key. Eventual fix when a message bus exists: an eviction
+event fanned out to every cache.
+
 ## Deferred by design
 
 These are scheduled, not missing. Listed so the two categories do not get confused.
@@ -142,7 +168,7 @@ overwrites the same key — orphans do not multiply per attempt — but an item 
 leaves exactly one. Quantified: at a 0.01% commit-failure rate on a 30M/month run, ~3,000
 orphans/month at ~200 KB ≈ **600 MB/month of unreclaimable storage** until the lock expires.
 Two-phase locking (retention applied only after commit) is not available: the bucket's default
-Object Lock retention applies at PUT. The orphan sweep is `TODO(prompt6)` in `RenderPipeline` — the
+Object Lock retention applies at PUT. The orphan sweep landed in Prompt 6 (report-only, ADR-0039) — the
 other half of reconciliation CHECK 1.
 
 **"Run PAUSED" reflects one replica's circuit breaker.** Enforcement is distributed (every replica's

@@ -47,6 +47,22 @@ public interface ICustomerKeyStore
     /// <param name="ct">Cancellation token.</param>
     /// <returns>True if this call inserted the row; false if one already existed.</returns>
     Task<bool> TryInsertAsync(CustomerKeyRecord record, CancellationToken ct);
+
+    /// <summary>
+    /// Destroys the customer's wrapped CEK: nulls the material, marks the row DESTROYED, and
+    /// scrubs the dead tuple so the bytes do not survive in MVCC history.
+    /// </summary>
+    /// <remarks>
+    /// The store performs the mechanics ONLY. Whether destruction is lawful - retention expired,
+    /// no legal hold, cooling-off elapsed and re-checked - is the caller's decision, made through
+    /// the retention decision engine and audited. This method must stay dumb, because a clever
+    /// store is a second place for legal logic to disagree with the first.
+    /// </remarks>
+    /// <param name="customer">The customer.</param>
+    /// <param name="reason">Recorded on the row, e.g. the POPIA s24 request reference.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>True if this call destroyed the key; false if it was already destroyed.</returns>
+    Task<bool> DestroyAsync(CustomerId customer, string reason, CancellationToken ct);
 }
 
 /// <summary>Raised when a customer's key material has been destroyed.</summary>
@@ -208,20 +224,16 @@ public sealed partial class CustomerKeyService : ICustomerKeyService
     }
 
     /// <inheritdoc />
-    public Task DestroyCekAsync(CustomerId customer, string reason, CancellationToken ct)
+    public async Task DestroyCekAsync(CustomerId customer, string reason, CancellationToken ct)
     {
-        // TODO(prompt6): destroying the CEK is the crypto-erasure execution path, and it belongs
-        // with the retention work that decides WHEN it may happen - after the retention period, with
-        // no legal hold outstanding, and with the erasure itself recorded in the audit trail. Doing
-        // the destruction here without those checks would build the irreversible half of the feature
-        // and leave the half that decides whether it is lawful for a later prompt.
-        _ = customer;
-        _ = reason;
-        _ = ct;
+        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
 
-        throw new NotImplementedException(
-            "Crypto-erasure is Prompt 6. It requires retention checks, legal-hold enforcement and an "
-            + "audit record, none of which exist yet, and it cannot be undone once done.");
+        // Deliberately thin. The half that decides WHETHER destruction is lawful - retention
+        // expired, no legal hold, the cooling-off window elapsed and the conflicts RE-CHECKED at
+        // execution time - lives in the erasure executor, which runs the retention decision
+        // engine and audits ERASURE_COMPLETED in the same pass. This method is the mechanics:
+        // null the material, scrub the MVCC history. Idempotent, because the executor retries.
+        _ = await _store.DestroyAsync(customer, reason, ct).ConfigureAwait(false);
     }
 
     [LoggerMessage(

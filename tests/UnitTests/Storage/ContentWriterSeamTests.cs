@@ -303,6 +303,17 @@ public sealed class ContentWriterSeamTests
             bool inserted = _rows.TryAdd(record.CustomerId.Value, record);
             return Task.FromResult(inserted);
         }
+
+        public Task<bool> DestroyAsync(CustomerId customer, string reason, CancellationToken ct)
+        {
+            if (!_rows.TryGetValue(customer.Value, out CustomerKeyRecord? row) || row.DestroyedAt is not null)
+            {
+                return Task.FromResult(false);
+            }
+
+            _rows[customer.Value] = row with { WrappedCek = [], Status = "DESTROYED", DestroyedAt = DateTimeOffset.UtcNow };
+            return Task.FromResult(true);
+        }
     }
 
     /// <summary>A source that faults after N bytes - the renderer dying mid-document.</summary>

@@ -52,3 +52,11 @@ Configuration is not evidence. Three things check it:
 - Compose logs `mc version info` and `mc retention info` after provisioning, so the container output proves the settings applied rather than proving the commands were issued.
 - A statement cannot be corrected in place. It never could — a regeneration is a new row and a new object at a new key (`-v2.enc`), by ADR-0009's versioning rule — and Object Lock now enforces what the schema already intended.
 - Retention and legal hold interact: a legal hold must be able to *extend* retention past the object's date, never shorten it. Prompt 6.
+
+## Revisit when
+
+- **Retention periods change by statute**: new PUTs pick up the new period; existing locks
+  cannot shorten, and any lengthening of EXISTING objects is a PutObjectRetention batch job to
+  plan deliberately.
+- **A legal instruction requires early destruction of locked objects**: it cannot be done, and
+  that is the point - the response is crypto-erasure (ADR-0035), not a storage change.

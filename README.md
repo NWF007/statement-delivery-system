@@ -184,6 +184,30 @@ The reasoning, with the SQL shapes, is in
 writing any SQL at all — five PostgreSQL features do the wrong thing behind a transaction pooler,
 silently, and only under load.
 
+## Why the encryption design exists: erasure inside an immutable store
+
+The strongest single argument in this system is a chain of three facts:
+
+1. Statements are written under **S3 Object Lock in Compliance mode** — for seven years, no
+   principal, not an administrator, not the root account, can delete them. That is what makes
+   them a regulatory record (FICA s23, Companies Act) rather than files with a policy attached.
+2. POPIA s24 gives a customer the right to erasure — and that right does not pause for a
+   retention schedule's storage mechanics. When it applies, deletion is not merely
+   inconvenient. **It is impossible.**
+3. Every statement is encrypted under a per-customer key (a three-tier hierarchy: cohort KEK in
+   KMS → per-customer CEK → per-object DEK). Destroy that one key — one row, one operation,
+   after a seven-day cooling-off window and a re-check for legal holds — and every copy of that
+   customer's statements everywhere becomes permanently unreadable: live, versioned, backed up,
+   replicated, archived. The objects stay exactly where the law requires them to stay; they are
+   now indistinguishable from random bytes.
+
+Crypto-erasure is therefore not an optimisation or a clever trick here. It is the **only
+mechanism available** — a cryptographic architecture chosen to satisfy a statutory obligation
+that no storage-layer mechanism could. The proof is a test:
+`Erasure_MakesStatementPermanentlyUndecryptable` destroys the key, confirms the ciphertext
+still exists, and confirms nothing can read it. See ADR-0020 (the hierarchy and its
+arithmetic), ADR-0035 (the cooling-off window) and ADR-0036 (why the metadata survives).
+
 ## Design decisions
 
 | ADR | Decision |
@@ -212,6 +236,22 @@ silently, and only under load.
 | [0021](docs/adr/0021-envelope-encryption-over-sse-kms.md) | Client-side envelope encryption rather than SSE-KMS — crypto-erasure decides it |
 | [0022](docs/adr/0022-object-lock-compliance-mode.md) | Object Lock in COMPLIANCE mode, GOVERNANCE in Development |
 | [0023](docs/adr/0023-high-cardinality-storage-key-prefix.md) | A hashed shard leads the storage key, not the date |
+| [0024](docs/adr/0024-security-gating-reads-run-in-the-callers-transaction.md) | Security-gating reads run in the caller's transaction |
+| [0025](docs/adr/0025-audit-events-bind-to-the-transaction-they-describe.md) | Audit events bind to the transaction they describe |
+| [0026](docs/adr/0026-postgres-queue-over-message-broker.md) | The generation queue is PostgreSQL, not a message broker |
+| [0027](docs/adr/0027-attempts-increment-on-claim.md) | Attempts increment on claim, not on completion |
+| [0028](docs/adr/0028-questpdf-licensing-position.md) | The QuestPDF licensing position |
+| [0029](docs/adr/0029-deterministic-pdf-rendering.md) | Byte-deterministic PDF rendering |
+| [0030](docs/adr/0030-pause-not-fail-on-circuit-open.md) | Pause the run when the ledger circuit opens; never fail it |
+| [0031](docs/adr/0031-spool-ciphertext-for-content-length.md) | Spool ciphertext to disk so every PUT declares a Content-Length |
+| [0032](docs/adr/0032-port-contracts-tested-with-production-shapes.md) | Test ports with the awkward shapes production produces |
+| [0033](docs/adr/0033-legal-conflict-surfaced-not-resolved.md) | Surface legal conflicts with their basis; never resolve them in code |
+| [0034](docs/adr/0034-delete-storage-before-marking-purged.md) | Purge deletes storage first, then marks the row |
+| [0035](docs/adr/0035-cooling-off-period-on-erasure.md) | Crypto-erasure schedules seven days out, re-checked at execution |
+| [0036](docs/adr/0036-metadata-survives-purge.md) | The statement row survives its own purge |
+| [0037](docs/adr/0037-dual-layer-legal-hold.md) | Legal holds in the database AND the object store, storage first |
+| [0038](docs/adr/0038-archive-tier-simulation-in-local-dev.md) | The archive tier is simulated locally, and labelled as such |
+| [0039](docs/adr/0039-orphan-sweep-reports-does-not-delete.md) | The orphan sweep reports and never deletes |
 
 Each ADR ends with a **Revisit when** section: two to four falsifiable triggers with concrete
 thresholds. It turns a justification into a claim that can be shown to be wrong.

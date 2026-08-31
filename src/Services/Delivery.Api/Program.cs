@@ -1,12 +1,15 @@
 using Delivery.Api.Auditing;
 using Delivery.Api.Configuration;
 using Delivery.Api.Downloads;
+using Delivery.Api.Retention;
 using Delivery.Api.Runs;
 using Delivery.Api.Statements;
 using Scalar.AspNetCore;
 using StatementDelivery.Persistence;
 using StatementDelivery.ServiceDefaults;
 using StatementDelivery.ServiceDefaults.HealthChecks;
+using StatementDelivery.ServiceDefaults.Retention;
+using StatementDelivery.ServiceDefaults.Storage;
 
 // Chiseled images have no shell and no curl, so the container health check is the application
 // probing itself: `dotnet <Service>.dll --healthcheck`. See HealthCheckProbe.
@@ -19,6 +22,14 @@ WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
 builder.AddServiceDefaults();
 builder.AddPersistence(serviceName: "delivery-api");
+
+// Object storage arrives in Prompt 6, and ONLY the admin surface: the legal-hold endpoints set
+// and release object-store holds (dual-layer enforcement, ADR-0037). This service still cannot
+// read or write statement CONTENT - it registers no content store, and in production its IAM
+// principal is scoped to Get/PutObjectLegalHold and nothing else.
+builder.AddObjectStorage();
+builder.AddObjectAdminStore();
+builder.AddHoldResolution();
 builder.AddDeliveryApi();
 
 WebApplication app = builder.Build();
@@ -34,6 +45,10 @@ app.MapStatementEndpoints();
 app.MapDownloadLinkEndpoints();
 app.MapAuditVerifyEndpoint();
 app.MapStatementRunEndpoints();
+app.MapLegalHoldEndpoints();
+app.MapErasureEndpoints();
+app.MapRestoreEndpoints();
+app.MapReconciliationEndpoints();
 
 if (app.Environment.IsDevelopment())
 {

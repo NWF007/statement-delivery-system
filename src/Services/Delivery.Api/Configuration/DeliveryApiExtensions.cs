@@ -64,6 +64,20 @@ public static class DeliveryApiExtensions
     /// <summary>The scope value <see cref="StaffPolicy"/> requires.</summary>
     public const string StaffScope = "audit.verify";
 
+    /// <summary>
+    /// The authorization policy for data-protection-officer endpoints — erasure, and nothing else.
+    /// </summary>
+    /// <remarks>
+    /// A scope ABOVE staff, not beside it: an operator who can inspect runs and verify audit
+    /// chains must still be unable to schedule the one operation in the system that no backup
+    /// can undo. Erasure is a statutory act performed on a data subject's behalf, and the token
+    /// that authorises it should be issued to the people who carry that accountability.
+    /// </remarks>
+    public const string DpoPolicy = "dpo";
+
+    /// <summary>The scope value <see cref="DpoPolicy"/> requires.</summary>
+    public const string DpoScope = "erasure.execute";
+
     // =========================================================================================
     //  WHAT EACH LIMIT IS ACTUALLY FOR
     //
@@ -198,6 +212,14 @@ public static class DeliveryApiExtensions
                         .Any(claim => claim.Value
                             .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                             .Contains(StaffScope, StringComparer.Ordinal))));
+
+            options.AddPolicy(DpoPolicy, policy => policy
+                .RequireAuthenticatedUser()
+                .RequireAssertion(static context =>
+                    context.User.FindAll("scope")
+                        .Any(claim => claim.Value
+                            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                            .Contains(DpoScope, StringComparer.Ordinal))));
         });
     }
 

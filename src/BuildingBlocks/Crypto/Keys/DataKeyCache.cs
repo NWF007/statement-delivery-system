@@ -111,6 +111,16 @@ internal static partial class DataKeyLog
 /// <summary>Supplies data keys for encrypting and decrypting statement objects.</summary>
 public interface IDataKeyBroker
 {
+    /// <summary>
+    /// Drops any cached key material for a customer, wiping it. Called by the erasure executor
+    /// after destroying the CEK, so THIS process's cache cannot outlive the key. Other
+    /// processes' caches expire on MaxAge - the cross-process gap is documented in
+    /// docs/LIMITATIONS.md, and the database-side write guard (Part G) is what actually closes
+    /// the dangerous path.
+    /// </summary>
+    /// <param name="customer">The customer.</param>
+    void Evict(CustomerId customer);
+
     /// <summary>Takes a data key for writing one object.</summary>
     /// <remarks>
     /// NO BYTE ESTIMATE, ON PURPOSE. The previous signature took one, and the streaming caller -
@@ -260,6 +270,18 @@ public sealed class DataKeyCache : IDataKeyBroker, IDisposable
 
         using DataKey cek = await _customerKeys.UnwrapCekAsync(customer, ct).ConfigureAwait(false);
         return KeyWrap.Unwrap(cek.Span, wrappedDek.Span, ContextFor(customer));
+    }
+
+    /// <inheritdoc />
+    public void Evict(CustomerId customer)
+    {
+        lock (_gate)
+        {
+            if (_entries.Remove(customer.Value, out Entry? entry))
+            {
+                entry.Key.Dispose();
+            }
+        }
     }
 
     /// <summary>Wipes every cached key.</summary>

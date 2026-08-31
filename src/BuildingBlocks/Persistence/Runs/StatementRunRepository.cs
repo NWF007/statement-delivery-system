@@ -173,6 +173,18 @@ public interface IStatementRunRepository
     /// <returns>Rows affected: 0 when the claim was reaped from under this worker.</returns>
     Task<int> FailItemAsync(long itemId, string failureReason, string workerId, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Records a DETERMINISTIC failure: FAILED with attempts raised to the ceiling, so the item
+    /// is never claimed again. For conditions no retry can change (a destroyed customer key).
+    /// </summary>
+    /// <param name="itemId">The item.</param>
+    /// <param name="failureReason">Exception type and message. Never a stack trace or content.</param>
+    /// <param name="workerId">This worker; completion is claimant-scoped.</param>
+    /// <param name="maxAttempts">The poison ceiling to raise attempts to.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Rows affected: 0 means the claim was reaped from under this worker.</returns>
+    Task<int> FailItemTerminallyAsync(long itemId, string failureReason, string workerId, int maxAttempts, CancellationToken cancellationToken);
+
     /// <summary>Returns claimed-but-unstarted items to QUEUED on graceful shutdown.</summary>
     /// <remarks>Attempts stay incremented - see the claim-time increment rule.</remarks>
     /// <param name="itemIds">The items this worker claimed and will not process.</param>
@@ -360,6 +372,17 @@ public sealed class StatementRunRepository : IStatementRunRepository
     private const string FailItemSql = """
         UPDATE statement_run_item
            SET status = 'FAILED', finished_at = now(), last_error = @error
+         WHERE id = @itemId AND status = 'RENDERING' AND claimed_by = @workerId;
+        """;
+
+    // attempts jumps to the ceiling so the claim query never hands this item out again: the
+    // failure is DETERMINISTIC (the customer's key is destroyed or scheduled - Part G), and a
+    // retry would burn a claim to hit the same wall. GREATEST keeps a higher recorded attempt
+    // count intact.
+    private const string FailItemTerminallySql = """
+        UPDATE statement_run_item
+           SET status = 'FAILED', finished_at = now(), last_error = @error,
+               attempts = GREATEST(attempts, @maxAttempts)
          WHERE id = @itemId AND status = 'RENDERING' AND claimed_by = @workerId;
         """;
 
@@ -645,6 +668,22 @@ public sealed class StatementRunRepository : IStatementRunRepository
             FailItemSql,
             new { itemId, error = bounded, workerId },
             commandTimeout: WriteTimeout,
+            cancellationToken: cancellationToken)).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<int> FailItemTerminallyAsync(
+        long itemId, string failureReason, string workerId, int maxAttempts, CancellationToken cancellationToken)
+    {
+        string bounded = failureReason.Length <= 500 ? failureReason : failureReason[..500];
+
+        await using NpgsqlConnection connection =
+            await _connections.OpenAsync(ConnectionIntent.Write, cancellationToken).ConfigureAwait(false);
+
+        return await connection.ExecuteAsync(new CommandDefinition(
+            FailItemTerminallySql,
+            new { itemId, error = bounded, workerId, maxAttempts },
+            commandTimeout: _connections.CommandTimeoutSeconds(ConnectionIntent.Write),
             cancellationToken: cancellationToken)).ConfigureAwait(false);
     }
 

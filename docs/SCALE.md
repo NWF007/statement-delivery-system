@@ -104,6 +104,25 @@ test trace output, so this block can be pasted rather than retyped.*
 
 *Bottleneck identified: name the component, the metric that saturated first, and the evidence for it.*
 
+## Orphaned-object exposure
+
+Write failures leak objects (a PUT whose transaction rolled back, a crash between upload and
+MarkAvailable). The weekly sweep reports them and deletes nothing (ADR-0039). The exposure,
+quantified rather than shrugged at: a 0.01% write-failure rate against 30 million statements a
+month is roughly **3,000 orphans/month**; at ~200 KB each that is about **600 MB/month** of
+unreclaimable storage, or **~$0.30/month** at Glacier Instant Retrieval rates. The
+`storage_orphan_total` / `storage_orphan_bytes` metrics are the live version of this estimate —
+a rate that departs from it is a write-path bug to fix at the source.
+
+### The sweep's own cost
+
+The local prefix walk is 4,096 `LIST` calls per full cycle (one per shard, more where a shard
+exceeds a page) — acceptable against MinIO, unacceptable as a production pattern at 2.5 billion
+objects. Production replaces the walk with **S3 Inventory**: a daily manifest diffed offline
+against the statement table, with the same classification (referenced / tombstoned / orphan)
+and the same report-only rule. The walk stays in the codebase for local development, resumable
+at any prefix via its persisted cursor.
+
 ## Known limits and next measurements
 
 - *Not measured: sustained month-end burst at the full 1,400 inserts/sec target.*
