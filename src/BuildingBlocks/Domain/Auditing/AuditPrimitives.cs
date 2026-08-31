@@ -118,6 +118,45 @@ public static class AuditAction
     /// simply stopped being mentioned.
     /// </remarks>
     public const string DownloadFailed = "DOWNLOAD_FAILED";
+
+    /// <summary>A legal hold was placed on a statement or a customer.</summary>
+    public const string LegalHoldPlaced = "LEGAL_HOLD_PLACED";
+
+    /// <summary>A legal hold was released.</summary>
+    public const string LegalHoldReleased = "LEGAL_HOLD_RELEASED";
+
+    /// <summary>The purge worker deleted a statement's object versions and marked the row.</summary>
+    public const string RetentionPurged = "RETENTION_PURGED";
+
+    /// <summary>The purge worker refused to purge: an active legal hold. A refusal is a decision, and decisions are audited.</summary>
+    public const string RetentionSkippedLegalHold = "RETENTION_SKIPPED_LEGAL_HOLD";
+
+    /// <summary>The purge worker refused to purge: the object store's lock has not expired.</summary>
+    public const string RetentionSkippedObjectLock = "RETENTION_SKIPPED_OBJECT_LOCK";
+
+    /// <summary>The database and the decision engine disagreed about a retention date. A data-integrity alert.</summary>
+    public const string RetentionDateDisagreement = "RETENTION_DATE_DISAGREEMENT";
+
+    /// <summary>A statement moved to the cold tier.</summary>
+    public const string StatementArchived = "STATEMENT_ARCHIVED";
+
+    /// <summary>A restore from cold storage was requested.</summary>
+    public const string StatementRestoreRequested = "STATEMENT_RESTORE_REQUESTED";
+
+    /// <summary>A restore completed; the statement is downloadable again.</summary>
+    public const string StatementRestored = "STATEMENT_RESTORED";
+
+    /// <summary>Crypto-erasure was scheduled, with its cooling-off window.</summary>
+    public const string ErasureScheduled = "ERASURE_SCHEDULED";
+
+    /// <summary>A scheduled erasure was cancelled during cooling-off.</summary>
+    public const string ErasureCancelled = "ERASURE_CANCELLED";
+
+    /// <summary>The erasure executor destroyed the customer key. Irreversible from this point.</summary>
+    public const string ErasureCompleted = "ERASURE_COMPLETED";
+
+    /// <summary>An erasure request (or execution pass) was refused, with the statutory basis in the context.</summary>
+    public const string ErasureBlocked = "ERASURE_BLOCKED";
 }
 
 /// <summary>

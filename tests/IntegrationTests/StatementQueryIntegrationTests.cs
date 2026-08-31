@@ -89,7 +89,8 @@ public sealed partial class StatementQueryIntegrationTests
                 start = period.Start,
                 end = period.End,
                 version,
-                key = $"statements/{period.Start:yyyy/MM}/{id.Value:N}.pdf",
+                key = StatementDelivery.Domain.Statements.StorageKeyScheme.KeyFor(
+                    id, account, period, 1),
                 retain = RetentionPolicy.Default.RetainUntil(period),
             },
             commandTimeout: 30,

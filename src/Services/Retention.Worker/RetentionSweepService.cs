@@ -1,10 +1,10 @@
 using System.Diagnostics;
-using Dapper;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using Retention.Worker.Configuration;
-using StatementDelivery.Persistence.Connections;
+using StatementDelivery.Domain.Abstractions;
 using StatementDelivery.Persistence.Leasing;
+using StatementDelivery.Persistence.Retention;
 
 namespace Retention.Worker;
 
@@ -42,27 +42,67 @@ public sealed partial class RetentionSweepService : BackgroundService
     /// </summary>
     private static readonly ActivitySource ActivitySource = new("StatementDelivery.Retention");
 
-    private readonly IDbConnectionFactory _connections;
     private readonly ILeaseManager _leases;
     private readonly RetentionWorkerOptions _options;
+    private readonly PurgePass _purge;
+    private readonly ErasureExecutor _erasure;
+    private readonly RestoreCompleter _restores;
+    private readonly ArchivePass _archive;
+    private readonly OrphanSweep _orphans;
+    private readonly ReconciliationPass _reconciliation;
+    private readonly ReconciliationRepository _reconciliationRuns;
+    private readonly IIdGenerator _ids;
+    private readonly TimeProvider _time;
     private readonly ILogger<RetentionSweepService> _logger;
 
+    // Cadence state, leader-local by design: a new leader running a daily job slightly early
+    // after a handover is harmless (every pass is idempotent and bounded), and persisting
+    // schedules would add a table to solve a problem idempotency already solved.
+    private DateTimeOffset _lastDailyPass = DateTimeOffset.MinValue;
+    private DateTimeOffset _lastErasurePass = DateTimeOffset.MinValue;
+    private DateTimeOffset _lastOrphanWindow = DateTimeOffset.MinValue;
+    private DateTimeOffset _lastReconciliationEnqueue = DateTimeOffset.MinValue;
+
     /// <summary>Initialises a new instance of the <see cref="RetentionSweepService"/> class.</summary>
-    /// <param name="connections">Connection factory.</param>
     /// <param name="leases">Lease manager used to elect a single leader.</param>
     /// <param name="options">Worker options.</param>
+    /// <param name="purge">The daily purge.</param>
+    /// <param name="erasure">The erasure executor.</param>
+    /// <param name="restores">The restore completer.</param>
+    /// <param name="archive">The archive transition.</param>
+    /// <param name="orphans">The orphan sweep.</param>
+    /// <param name="reconciliation">The reconciliation pass.</param>
+    /// <param name="reconciliationRuns">The run queue, for the daily auto-enqueue.</param>
+    /// <param name="ids">Id generator.</param>
+    /// <param name="time">Clock.</param>
     /// <param name="logger">Logger.</param>
     public RetentionSweepService(
-        IDbConnectionFactory connections,
         ILeaseManager leases,
         IOptions<RetentionWorkerOptions> options,
+        PurgePass purge,
+        ErasureExecutor erasure,
+        RestoreCompleter restores,
+        ArchivePass archive,
+        OrphanSweep orphans,
+        ReconciliationPass reconciliation,
+        ReconciliationRepository reconciliationRuns,
+        IIdGenerator ids,
+        TimeProvider time,
         ILogger<RetentionSweepService> logger)
     {
         ArgumentNullException.ThrowIfNull(options);
 
-        _connections = connections;
         _leases = leases;
         _options = options.Value;
+        _purge = purge;
+        _erasure = erasure;
+        _restores = restores;
+        _archive = archive;
+        _orphans = orphans;
+        _reconciliation = reconciliation;
+        _reconciliationRuns = reconciliationRuns;
+        _ids = ids;
+        _time = time;
         _logger = logger;
     }
 
@@ -184,20 +224,54 @@ public sealed partial class RetentionSweepService : BackgroundService
         activity?.SetTag("retention.lease_name", lease.LeaseName);
         activity?.SetTag("retention.fence_token", lease.FenceToken);
 
-        await using NpgsqlConnection connection =
-            await _connections.OpenAsync(ConnectionIntent.Write, cancellationToken).ConfigureAwait(false);
+        DateTimeOffset now = _time.GetUtcNow();
 
-        // TODO(retention): drop expired partitions, honour legal holds, and process erasure
-        // requests - each one guarded by lease.FenceToken so a stalled former leader cannot act on
-        // a lease it no longer holds. Until then the sweep proves the leader-elected path works end
-        // to end: exactly one replica reaches this line, on a connection through PgBouncer.
-        int probe = await connection.ExecuteScalarAsync<int>(
-            new CommandDefinition(
-                "SELECT 1;",
-                commandTimeout: _connections.CommandTimeoutSeconds(ConnectionIntent.Write),
-                cancellationToken: cancellationToken)).ConfigureAwait(false);
+        // EVERY TICK: a due restore completes on schedule; a staff-requested reconciliation
+        // run does not wait for tomorrow.
+        int restored = await _restores.RunAsync(lease.FenceToken, cancellationToken).ConfigureAwait(false);
+        _ = await _reconciliation.RunAsync(cancellationToken).ConfigureAwait(false);
 
-        LogSweepCompleted(_logger, lease.FenceToken, probe);
+        // DAILY, ON ITS OWN INTERVAL: the erasure executor. The brief calls it a daily job and
+        // the blocked-request audit cadence assumes it (V022) - running it every tick was 288
+        // ERASURE_BLOCKED appends per day per blocked request. The cooling-off window is seven
+        // days; up to a day of execution slack is noise.
+        int erased = 0;
+        if (now - _lastErasurePass >= TimeSpan.FromHours(_options.ErasureIntervalHours))
+        {
+            erased = await _erasure.RunAsync(lease.FenceToken, cancellationToken).ConfigureAwait(false);
+            _lastErasurePass = now;
+        }
+
+        // DAILY: the purge and the archive transition. Idempotent and bounded, so a leadership
+        // handover running them early costs nothing but a small batch.
+        int purged = 0;
+        int archived = 0;
+        if (now - _lastDailyPass >= TimeSpan.FromHours(_options.DailyJobIntervalHours))
+        {
+            purged = await _purge.RunAsync(lease.FenceToken, cancellationToken).ConfigureAwait(false);
+            archived = await _archive.RunAsync(lease.FenceToken, cancellationToken).ConfigureAwait(false);
+            _lastDailyPass = now;
+        }
+
+        // DAILY: the scheduled reconciliation run, queued through the same queue the API uses so
+        // GET /latest cannot tell them apart.
+        if (now - _lastReconciliationEnqueue >= TimeSpan.FromHours(_options.DailyJobIntervalHours))
+        {
+            await _reconciliationRuns.EnqueueAsync(_ids.NewId(), requestedBy: null, cancellationToken)
+                .ConfigureAwait(false);
+            _lastReconciliationEnqueue = now;
+        }
+
+        // WEEKLY window: the orphan sweep, resuming its saved cursor; a bounded number of pages
+        // per tick, so one full 256-shard cycle spreads across the window.
+        int orphans = 0;
+        if (now - _lastOrphanWindow >= TimeSpan.FromDays(_options.OrphanSweepIntervalDays))
+        {
+            orphans = await _orphans.RunAsync(cancellationToken).ConfigureAwait(false);
+            _lastOrphanWindow = now;
+        }
+
+        LogSweepCompleted(_logger, lease.FenceToken, purged, archived, erased, restored, orphans);
     }
 
     [LoggerMessage(
@@ -215,8 +289,9 @@ public sealed partial class RetentionSweepService : BackgroundService
     [LoggerMessage(
         EventId = 4002,
         Level = LogLevel.Debug,
-        Message = "Retention sweep completed under fence token {FenceToken} (probe={Probe}). Nothing is due for retention yet.")]
-    private static partial void LogSweepCompleted(ILogger logger, long fenceToken, int probe);
+        Message = "Retention sweep completed under fence token {FenceToken}: purged={Purged}, archived={Archived}, erased={Erased}, restored={Restored}, orphansReported={Orphans}.")]
+    private static partial void LogSweepCompleted(
+        ILogger logger, long fenceToken, int purged, int archived, int erased, int restored, int orphans);
 
     [LoggerMessage(
         EventId = 4003,

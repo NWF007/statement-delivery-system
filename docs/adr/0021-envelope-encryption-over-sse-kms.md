@@ -54,3 +54,11 @@ So **"zero changes" would be a false claim, and "no logic changes" is a true one
 - `statement.wrapped_dek`, `dek_algorithm`, `kek_id` and `content_sha256` are populated on every write. The `iv` and `auth_tag` columns from V006 stay NULL permanently — the framed format has one nonce per frame, derived structurally, and one tag per frame. There is no single IV to record. They are left rather than dropped because dropping a column from a 2.5-billion-row table is a rewrite, and NULL costs nothing.
 - Bucket-level `SSE-S3` is not disabled. It is free, it is orthogonal, and defence in depth means not objecting to a second layer that costs nothing.
 - `content_sha256` is computed during encryption in the same pass and verified during decryption. It catches what per-frame authentication cannot: an object silently replaced by an *older, authentic* version of itself.
+
+## Revisit when
+
+- **The threat model adds an adversary inside the storage provider's control plane**: revisit
+  whether client-side envelope encryption alone still meets it, or an HSM-held data key path is
+  warranted for a subset of records.
+- **SSE-KMS gains per-object erasure semantics** that actually destroy data: the reason this
+  decision exists is that it does not.

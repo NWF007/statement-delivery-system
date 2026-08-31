@@ -1,7 +1,9 @@
 using Retention.Worker.Configuration;
+using StatementDelivery.Crypto;
 using StatementDelivery.Persistence;
 using StatementDelivery.ServiceDefaults;
 using StatementDelivery.ServiceDefaults.HealthChecks;
+using StatementDelivery.ServiceDefaults.Retention;
 using StatementDelivery.ServiceDefaults.Storage;
 
 // Chiseled images have no shell and no curl, so the container health check is the application
@@ -17,11 +19,17 @@ WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
 builder.AddServiceDefaults();
 builder.AddPersistence(serviceName: "retention-worker");
-// NO OBJECT STORAGE HERE UNTIL PROMPT 6. This service resolves nothing that touches a bucket, so
-// AddObjectStorage() only registered a client nothing injected and a readiness check on a bucket it
-// never reads - while requiring credentials it had no use for. Prompt 6's purge job adds it back
-// alongside AddCrypto() and AddEncryptedContentStore(includeWriter: false), so the Object Lock
-// verification arrives in the same commit as the ability to delete an object.
+
+// Prompt 6: object storage arrives in the same commit as the ability to delete an object, exactly
+// as the Prompt 5 note here promised. The full admin surface (delete, lock reads, legal holds,
+// listing) belongs to THIS service alone; AddCrypto brings the key hierarchy the erasure executor
+// destroys keys through; the encrypted content store registration brings the Object Lock
+// readiness verification.
+builder.AddObjectStorage();
+builder.AddCrypto();
+builder.AddEncryptedContentStore(includeWriter: false);
+builder.AddObjectAdminStore();
+builder.AddHoldResolution();
 builder.AddRetentionWorker();
 
 WebApplication app = builder.Build();

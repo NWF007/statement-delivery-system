@@ -98,6 +98,33 @@ public sealed class DeliveryApiFactory : WebApplicationFactory<Delivery.Api.Conf
         return new JsonWebTokenHandler { SetDefaultTimesOnTokenCreation = true }.CreateToken(descriptor);
     }
 
+    /// <summary>Mints a bearer token carrying the data-protection-officer scope.</summary>
+    /// <remarks>
+    /// Separate from <see cref="StaffTokenFor"/> deliberately: erasure sits ABOVE staff, and
+    /// "a staff token cannot schedule an erasure" is a test this separation makes expressible.
+    /// </remarks>
+    /// <param name="customerId">The subject.</param>
+    /// <returns>A signed bearer token with the erasure.execute scope.</returns>
+    public static string DpoTokenFor(Guid customerId)
+    {
+        var descriptor = new SecurityTokenDescriptor
+        {
+            Issuer = Issuer,
+            Audience = Audience,
+            Subject = new ClaimsIdentity(
+            [
+                new Claim("sub", customerId.ToString("D")),
+                new Claim("scope", "statements.read erasure.execute"),
+            ]),
+            Expires = DateTime.UtcNow.AddMinutes(30),
+            SigningCredentials = new SigningCredentials(
+                new SymmetricSecurityKey(Encoding.UTF8.GetBytes(SigningKey)),
+                SecurityAlgorithms.HmacSha256),
+        };
+
+        return new JsonWebTokenHandler { SetDefaultTimesOnTokenCreation = true }.CreateToken(descriptor);
+    }
+
     /// <inheritdoc />
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -117,6 +144,15 @@ public sealed class DeliveryApiFactory : WebApplicationFactory<Delivery.Api.Conf
                 ["Jwt:RequireHttpsMetadata"] = "false",
 
                 ["Audit:ChainCount"] = "16",
+
+                // Prompt 6: the API registers AddObjectStorage for the legal-hold admin surface,
+                // and ObjectStorageOptions validates on start. The client is lazy - nothing here
+                // contacts this endpoint unless a test drives the legal-hold endpoints, and those
+                // tests substitute IStatementObjectAdmin or point at the MinIO fixture.
+                ["ObjectStorage:BucketName"] = "statements-test",
+                ["ObjectStorage:ServiceUrl"] = "http://localhost:9",
+                ["ObjectStorage:AccessKey"] = "unused",
+                ["ObjectStorage:SecretKey"] = "unused",
 
                 // The generation worker owns partition maintenance; the API only verifies it.
                 ["Partitioning:MaintenanceEnabled"] = "false",

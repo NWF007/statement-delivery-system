@@ -1,5 +1,6 @@
 using Dapper;
 using Npgsql;
+using StatementDelivery.Domain.Exceptions;
 using StatementDelivery.Domain.Identifiers;
 using StatementDelivery.Domain.Statements;
 
@@ -56,7 +57,27 @@ public sealed class StatementWriteRepository : IStatementWriteRepository
                generated_at   = @generatedAt
          WHERE id           = @id
            AND period_start = @periodStart
-           AND status IN ('PENDING', 'FAILED');
+           AND status IN ('PENDING', 'FAILED')
+
+           -- THE WARM-CACHE WRITE GUARD (remediation Part G). A generation worker's cached CEK
+           -- outlives key destruction by the cache's MaxAge, and cache invalidation across
+           -- processes needs a bus this system does not have - but this UPDATE is transactional
+           -- and already exists, so the guard lives here: one indexed primary-key probe inside
+           -- a statement that already runs. SCHEDULED_DESTRUCTION counts too: publishing into a
+           -- cooling-off window creates data that is about to become unreadable, which is worse
+           -- than refusing.
+           AND NOT EXISTS (SELECT 1
+                             FROM customer_key k
+                            WHERE k.customer_id = statement.customer_id
+                              AND k.status IN ('DESTROYED', 'SCHEDULED_DESTRUCTION'));
+        """;
+
+    private const string KeyBlocksPublishSql = """
+        SELECT EXISTS (SELECT 1
+                         FROM customer_key k
+                         JOIN statement s ON s.customer_id = k.customer_id
+                        WHERE s.id = @id AND s.period_start = @periodStart
+                          AND k.status IN ('DESTROYED', 'SCHEDULED_DESTRUCTION'));
         """;
 
     // No storage or crypto columns touched. A failed render produced no bytes, and nulling the
@@ -129,7 +150,7 @@ public sealed class StatementWriteRepository : IStatementWriteRepository
                 + "requires on every AVAILABLE row - it is what lets a reader detect a substituted object.",
                 nameof(location));
 
-        return await transaction.Connection!.ExecuteAsync(new CommandDefinition(
+        int affected = await transaction.Connection!.ExecuteAsync(new CommandDefinition(
             MarkAvailableSql,
             new
             {
@@ -147,6 +168,27 @@ public sealed class StatementWriteRepository : IStatementWriteRepository
             transaction: transaction,
             commandTimeout: _timeouts.WriteCommandTimeoutSeconds,
             cancellationToken: cancellationToken)).ConfigureAwait(false);
+
+        if (affected == 0)
+        {
+            // Distinguish "the state predicate refused" (the caller's normal zero-rows contract)
+            // from "the key is destroyed or scheduled" - the latter is deterministic, and the
+            // run item must fail TERMINALLY rather than retry into the same wall.
+            bool keyBlocks = await transaction.Connection!.ExecuteScalarAsync<bool>(new CommandDefinition(
+                KeyBlocksPublishSql,
+                new { id = id.Value, periodStart = partitionKey },
+                transaction: transaction,
+                commandTimeout: _timeouts.WriteCommandTimeoutSeconds,
+                cancellationToken: cancellationToken)).ConfigureAwait(false);
+
+            if (keyBlocks)
+            {
+                throw new CustomerKeyDestroyedException(
+                    $"Statement {id.Value:D}: the customer's key is destroyed or scheduled for destruction; publishing is refused (the Part G write guard).");
+            }
+        }
+
+        return affected;
     }
 
     /// <inheritdoc />

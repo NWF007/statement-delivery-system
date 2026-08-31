@@ -155,6 +155,11 @@ public sealed class EnvironmentGuardTests
         public Task<StatementDelivery.Crypto.Keys.DataKey> UnwrapDekAsync(
             StatementDelivery.Domain.Identifiers.CustomerId customer, ReadOnlyMemory<byte> wrappedDek, CancellationToken ct) =>
             throw new NotSupportedException();
+
+        void StatementDelivery.Crypto.Keys.IDataKeyBroker.Evict(
+            StatementDelivery.Domain.Identifiers.CustomerId customer)
+        {
+        }
     }
 
     [Fact]

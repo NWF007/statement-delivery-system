@@ -420,16 +420,20 @@ public sealed class KeyHierarchyTests
     }
 
     [Fact]
-    public async Task DestroyCek_IsDeferredToPromptSix()
+    public async Task DestroyCek_RequiresADocumentedReason()
     {
+        // The Prompt 4 predecessor of this test pinned DestroyCekAsync as NotImplementedException,
+        // so the destructive half could not ship before the code that decides whether destruction
+        // is LAWFUL. Prompt 6 built that code (the retention decision engine, the cooling-off
+        // window, the re-evaluating executor), so the deferral assertion became obsolete - and
+        // this replaces it with the new contract's floor: destruction without a documented reason
+        // is refused, because an undocumented erasure cannot be defended later. The full
+        // behaviour - idempotent destruction, permanent undecryptability, no resurrection - is
+        // pinned in UnitTests.Retention.CryptoErasureTests.
         var service = new CustomerKeyService(Provider, new NullCustomerKeyStore(), NullLogger<CustomerKeyService>.Instance);
 
-        // Deliberately unimplemented, and asserted so rather than left as a silent stub. Erasure is
-        // irreversible; the code that decides WHEN it is lawful - retention expired, no legal hold,
-        // audited - does not exist yet, and building the destructive half first is how a system ends
-        // up able to erase data it was required to keep.
-        _ = await Should.ThrowAsync<NotImplementedException>(() =>
-            service.DestroyCekAsync(new CustomerId(Guid.NewGuid()), "test", TestContext.Current.CancellationToken))
+        _ = await Should.ThrowAsync<ArgumentException>(() =>
+            service.DestroyCekAsync(new CustomerId(Guid.NewGuid()), "  ", TestContext.Current.CancellationToken))
             .ConfigureAwait(true);
     }
 
@@ -503,6 +507,9 @@ public sealed class KeyHierarchyTests
 
         public Task<bool> TryInsertAsync(CustomerKeyRecord record, CancellationToken ct) =>
             Task.FromResult(true);
+
+        public Task<bool> DestroyAsync(CustomerId customer, string reason, CancellationToken ct) =>
+            Task.FromResult(false);
     }
 
     /// <summary>Counts error-level log events - the unsettled-lease tripwire's assertion surface.</summary>

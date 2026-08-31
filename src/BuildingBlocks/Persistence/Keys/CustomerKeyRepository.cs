@@ -48,6 +48,26 @@ public sealed class CustomerKeyRepository : ICustomerKeyStore
         RETURNING customer_id;
         """;
 
+    // status <> 'DESTROYED' makes retries no-ops, and the WHERE beats a blind UPDATE for one
+    // more reason: the RETURNING tells the caller whether THIS call did the destruction, which is
+    // what decides whether ERASURE_COMPLETED gets audited once or twice.
+    //
+    // destruction_due_at is cleared in the same statement: V018's ck_customer_key_scheduled_has_due
+    // ties a due date to SCHEDULED_DESTRUCTION and nothing else - a destroyed row with a live
+    // fuse would fail the constraint, and rightly.
+    private const string DestroySql =
+        """
+        UPDATE customer_key
+           SET wrapped_cek        = NULL,
+               status             = 'DESTROYED',
+               destroyed_at       = now(),
+               destruction_reason = @reason,
+               destruction_due_at = NULL
+         WHERE customer_id = @customer
+           AND status <> 'DESTROYED'
+        RETURNING customer_id;
+        """;
+
     private readonly IDbConnectionFactory _connections;
 
     /// <summary>Initialises a new instance of the <see cref="CustomerKeyRepository"/> class.</summary>
@@ -94,6 +114,39 @@ public sealed class CustomerKeyRepository : ICustomerKeyStore
             cancellationToken: ct)).ConfigureAwait(false);
 
         return inserted is not null;
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> DestroyAsync(CustomerId customer, string reason, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+
+        await using NpgsqlConnection connection =
+            await _connections.OpenAsync(ConnectionIntent.Write, ct).ConfigureAwait(false);
+
+        Guid? destroyed = await connection.ExecuteScalarAsync<Guid?>(new CommandDefinition(
+            DestroySql,
+            new { customer = customer.Value, reason },
+            commandTimeout: _connections.CommandTimeoutSeconds(ConnectionIntent.Write),
+            cancellationToken: ct)).ConfigureAwait(false);
+
+        if (destroyed is null)
+        {
+            return false;
+        }
+
+        // VACUUM, because the UPDATE alone has not removed the wrapped CEK from disk: MVCC keeps
+        // the old row version - key material included - on the page until vacuumed. Plain VACUUM
+        // (app_retention holds MAINTAIN, PostgreSQL 17) removes the dead tuple; it cannot run
+        // inside a transaction, hence a separate command on the same connection. Honest limit:
+        // freed page space is reused, not zeroed, and filesystem journals are beyond SQL's reach -
+        // the defence in depth for those layers is full-disk encryption, per the threat model.
+        _ = await connection.ExecuteAsync(new CommandDefinition(
+            "VACUUM customer_key;",
+            commandTimeout: _connections.CommandTimeoutSeconds(ConnectionIntent.Write),
+            cancellationToken: ct)).ConfigureAwait(false);
+
+        return true;
     }
 
     private sealed record Row

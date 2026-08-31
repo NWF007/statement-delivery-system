@@ -17,3 +17,14 @@ before anything else:
 `GetRetentionAsync` returns mode, retain-until and legal-hold status. The purge
 worker treats it as authoritative over the database — see Prompt 6 constraint 4.
 Delete must be idempotent: a missing object is success, not an error.
+
+---
+
+**Status, 2026-08-31: DONE.** The surface landed as `IStatementObjectAdmin`
+(`ServiceDefaults/Storage/ObjectAdminStore.cs`): `DeleteObjectVersionsAsync(key, ct)` (idempotent,
+returns the deleted version ids for the audit) and `GetRetentionAsync(key, ct)` (mode,
+retain-until, legal-hold status - authoritative over the database per hard constraint 4), plus
+`SetLegalHoldAsync` and the bounded `ListKeysAsync` the sweep needed. One deliberate deviation
+from the sketch above: no `NpgsqlTransaction` parameter - object storage cannot join a database
+transaction, and the purge worker sequences storage-then-database explicitly instead (ADR-0034).
+

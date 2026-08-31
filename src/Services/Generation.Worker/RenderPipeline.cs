@@ -178,9 +178,10 @@ public sealed partial class RenderPipeline
         //   - The residue is quantified, not hand-waved: at a 0.01% commit-failure rate on a
         //     30M/month run, ~3,000 orphans/month at ~200KB is ~600MB/month of unreclaimable
         //     storage until the lock expires. Recorded in docs/LIMITATIONS.md.
-        // TODO(prompt6): the orphan sweep - reconcile object keys against statement rows, the
-        // other half of reconciliation CHECK 1 (statement_content_missing_total covers rows
-        // without objects; this covers objects without rows).
+        // The other half of that reconciliation is the retention worker's weekly orphan sweep
+        // (Prompt 6, ADR-0039): statement_content_missing_total covers rows without objects;
+        // the sweep covers objects without rows, report-only, with the storage_tombstone
+        // ledger distinguishing leaked objects from lawful erasure remnants.
         stageStart = _time.GetTimestamp();
 
         StoredObject stored = await RenderStreamBridge.ExecuteAsync(

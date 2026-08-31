@@ -129,7 +129,12 @@ public sealed class RetentionPolicyTests
 /// </remarks>
 public sealed class StatementStateMachineTests
 {
-    private static readonly StorageLocation Location = new("statements/2026/08/abc.pdf", "STANDARD", 42_000);
+    private static readonly StorageLocation Location = new(
+        StorageKeyScheme.KeyFor(
+            new StatementId(Guid.CreateVersion7()), new AccountId(Guid.CreateVersion7()),
+            StatementPeriod.ForMonth(2026, 8), 1),
+        "STANDARD",
+        42_000);
     private static readonly DateTimeOffset At = new(2026, 9, 1, 2, 14, 33, TimeSpan.Zero);
 
     private static Statement InState(StatementStatus status)

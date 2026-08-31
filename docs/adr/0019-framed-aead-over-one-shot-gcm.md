@@ -80,3 +80,10 @@ Range remains unsupported. The reason it is unsupported is the single-use token 
 
 ### Enforcement
 `tests/UnitTests/Crypto/FramedCipherTests.cs` covers the format as a format: round trips at every boundary including the exact-multiple case, and a negative test for every failure mode the format defines. `Truncate_DropFinalFrame_IsDetected` is the one that proves the construction works — if it passes the format is sound, and if it were missing the format could be broken in a way every other test still passes.
+
+## Revisit when
+
+- **A statement class outgrows the frame arithmetic** (single objects far past the tested
+  200 MB): revalidate memory ceilings and the frame counter's headroom before raising limits.
+- **A cryptographic review recommends a different AEAD or nonce scheme**: SDP1 is versioned in
+  its magic precisely so SDP2 can coexist during a migration.

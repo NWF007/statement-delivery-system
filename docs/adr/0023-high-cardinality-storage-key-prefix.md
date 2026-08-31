@@ -46,3 +46,12 @@ The `.enc` extension is deliberate. An operator looking at the bucket should be 
 - **Reads are unaffected.** A read already knows its statement id, so it computes the same shard the write did. The scheme costs one SHA-256 per key, which is nanoseconds.
 - **The scheme must not change once objects exist.** A different shard function makes existing keys uncomputable. `storage_key` is stored on the row, so existing objects remain reachable — but the invariant that a key is *derivable* would be lost, and with it the ability to recompute a key that was never written down. If the scheme ever changes, it changes for new versions only, and old rows keep their stored keys.
 - **Shard count is fixed at 4,096 by the three-character prefix.** Unlike the cohort count (ADR-0020), changing it is recoverable: existing keys stay valid because they are stored, and only new objects land differently. It is a performance parameter, not a one-way door — the two are worth distinguishing, since they look similar in code.
+
+## Revisit when
+
+- **The shard width or count needs to change** (`StorageKeyScheme.ShardWidth`/`ShardCount`):
+  every existing object keeps its old prefix, so a change means EITHER dual-prefix readers for
+  seven years or a copy migration the Compliance locks forbid. Treat as effectively frozen; the
+  pinned test makes changing it a deliberate act.
+- **A prefix hot-spots anyway** (provider-side throttling reports): the hash is doing its job
+  only if writes spread evenly; measure before assuming.

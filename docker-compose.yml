@@ -342,6 +342,14 @@ services:
       # redeeming are separate deployables precisely so a flood against the public one cannot
       # exhaust the authenticated one.
       DownloadLinks__GatewayBaseUrl: http://localhost:${DOWNLOAD_GATEWAY_PORT:-8082}
+      # Prompt 6: the legal-hold endpoints set and release OBJECT-STORE holds (dual-layer
+      # enforcement, ADR-0037), so this service now holds storage credentials - scoped, in
+      # production IAM, to Get/PutObjectLegalHold and nothing else. It still cannot read or
+      # write statement content: it registers no content store.
+      ObjectStorage__ServiceUrl: http://minio:9000
+      ObjectStorage__BucketName: ${STATEMENTS_BUCKET}
+      ObjectStorage__AccessKey: ${MINIO_ROOT_USER}
+      ObjectStorage__SecretKey: ${MINIO_ROOT_PASSWORD}
     ports:
       - "${DELIVERY_API_PORT:-8081}:8080"
     networks: [statement-delivery]
@@ -440,14 +448,22 @@ services:
       Postgres__PrimaryConnectionString: Host=pgbouncer;Port=6432;Database=statements_retention;Username=app_retention;Password=${APP_RETENTION_PASSWORD}
       Postgres__ReplicaConnectionString: ${POSTGRES_REPLICA_CONNECTION}
       Cache__ConnectionString: redis:6379
-      # NO OBJECT STORAGE CREDENTIALS, deliberately, and they were here before Prompt 4.
-      #
-      # Retention.Worker resolves neither IStatementContentStore nor IAmazonS3 - it cannot read or
-      # write an object until Prompt 6 gives it the purge job. Holding a bucket access key it never
-      # uses is a credential with no purpose, on the one service that will eventually be the only
-      # one in the system allowed to DELETE. Prompt 6 adds them back together with
-      # AddCrypto()/AddEncryptedContentStore(), so the service also gets the Object Lock readiness
-      # check at the same moment it gains the ability to touch an object.
+      # Object storage credentials RETURN here in Prompt 6, exactly as the Prompt 5 note promised:
+      # in the same commit as the purge job that needs them. This is now the ONLY service allowed
+      # to DELETE an object (its production IAM: DeleteObject*, GetObjectRetention,
+      # Get/PutObjectLegalHold, ListBucket, GetObject for reconciliation HEADs) - and the Object
+      # Lock readiness check arrives with them.
+      ObjectStorage__ServiceUrl: http://minio:9000
+      ObjectStorage__BucketName: ${STATEMENTS_BUCKET}
+      ObjectStorage__AccessKey: ${MINIO_ROOT_USER}
+      ObjectStorage__SecretKey: ${MINIO_ROOT_PASSWORD}
+      ObjectStorage__Lock__Mode: GOVERNANCE
+      Crypto__KeyProvider: Local
+      Crypto__LocalKeys__MasterSecret: ${CRYPTO_MASTER_SECRET}
+      # The compliance lifecycle's knobs. The cooling-off default (7 days) lives in code; the
+      # simulated restore latency is minutes locally because a demo cannot wait four hours -
+      # ADR-0038 documents what is real and what is simulated.
+      Retention__Restore__SimulatedDelayMinutes: "2"
     # No published ports and no container_name, so this can be scaled to prove leader election:
     #     docker compose up -d --scale retention-worker=3
     #     docker compose logs retention-worker | grep -c "lease acquired"   # -> 1

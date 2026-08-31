@@ -13,6 +13,7 @@ using StatementDelivery.Domain.Auditing;
 using StatementDelivery.Domain.Statements;
 using StatementDelivery.Domain.Tokens;
 using StatementDelivery.Persistence.Repositories;
+using StatementDelivery.Persistence.Retention;
 using StatementDelivery.Persistence.Tokens;
 using StatementDelivery.Persistence.Uow;
 using StatementDelivery.ServiceDefaults.Auditing;
@@ -91,6 +92,7 @@ public static class DownloadEndpoints
         IDownloadTokenRepository tokens,
         IStatementReadRepository statements,
         IStatementContentStore content,
+        RestoreRequestRepository restores,
         RequestAudit audit,
         DownloadMetrics metrics,
         IOptions<DownloadOptions> options,
@@ -269,11 +271,28 @@ public static class DownloadEndpoints
 
         if (resolved.Status == StatementStatus.Archived)
         {
-            // Audited inside the consume transaction, with status=ARCHIVED in the detail bag.
-            return Results.Problem(
-                title: "Statement is archived",
-                detail: "This statement is in cold storage and must be restored before it can be downloaded.",
-                statusCode: StatusCodes.Status409Conflict);
+            // A completed, unexpired restore admits the download: the object never moved (a
+            // Glacier restore is a temporary copy; locally nothing moves at all, ADR-0038), so
+            // serving is just falling through to the normal read. Without one, the 409 now
+            // carries the restore endpoint Prompt 3 promised - a 409 with a way forward is a
+            // flow; without it, a support ticket.
+            RestoreRequestRow? liveRestore = await restores.FindLiveAsync(
+                resolved.Id, cancellationToken).ConfigureAwait(false);
+
+            if (liveRestore is null)
+            {
+                // Audited inside the consume transaction, with status=ARCHIVED in the detail bag.
+                return Results.Problem(
+                    title: "Statement is archived",
+                    detail: "This statement is in cold storage and must be restored before it can be downloaded.",
+                    statusCode: StatusCodes.Status409Conflict,
+                    extensions: new Dictionary<string, object?>(StringComparer.Ordinal)
+                    {
+                        ["restoreEndpoint"] = string.Create(
+                            CultureInfo.InvariantCulture,
+                            $"/v1/statements/{resolved.Id.Value:D}/restore?period={resolved.Period.Start:O}"),
+                    });
+            }
         }
 
         // -----------------------------------------------------------------------------------------
