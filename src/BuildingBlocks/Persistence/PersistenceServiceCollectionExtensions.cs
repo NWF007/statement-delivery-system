@@ -122,7 +122,8 @@ public static class PersistenceServiceCollectionExtensions
         builder.Services.AddSingleton<IAuditWriter, PostgresAuditWriter>();
         builder.Services.AddSingleton<IAuditVerifier, PostgresAuditVerifier>();
 
-        // TODO(security): the no-op anchor does NOT close the gap it stands in for. Chain heads
+        // TODO(security): the no-op anchor does NOT close the gap it stands in for - see
+        // docs/LIMITATIONS.md, "Known limitations". Chain heads
         // live in the same database as the events, so a sufficiently privileged attacker can
         // rewrite both and produce a self-consistent forgery. Replace with an Object Lock-backed
         // implementation. See docs/adr/0010-sharded-audit-hash-chains.md.

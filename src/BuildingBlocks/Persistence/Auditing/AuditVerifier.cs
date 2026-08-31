@@ -243,7 +243,7 @@ public sealed class PostgresAuditVerifier : IAuditVerifier
 /// so that verification compares against something the database's attacker never held.
 /// </para>
 /// <para>
-/// TODO(security): the implementation is deferred; only this seam and a no-op exist. Naming the
+/// TODO(security): the implementation is deferred; only this seam and a no-op exist (tracked in docs/LIMITATIONS.md, "Known limitations"). Naming the
 /// limit of your own control - and scaffolding the thing that closes it - is the point. Until an
 /// anchor ships, treat chain verification as evidence against application bugs and opportunistic
 /// tampering, NOT against a privileged insider.
@@ -264,7 +264,7 @@ public interface IChainAnchor
 /// implementation lands.
 /// </summary>
 /// <remarks>
-/// TODO(security): replace with an Object Lock-backed implementation. This type existing must never
+/// TODO(security): replace with an Object Lock-backed implementation (docs/LIMITATIONS.md, "Next" item 3). This type existing must never
 /// be read as the gap being closed - it is a placeholder that makes the gap visible in the
 /// dependency graph rather than only in a document.
 /// </remarks>

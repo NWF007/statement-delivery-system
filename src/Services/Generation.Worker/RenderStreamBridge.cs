@@ -110,6 +110,18 @@ public static class RenderStreamBridge
             {
                 await renderTask.WaitAsync(RenderDrainTimeout, CancellationToken.None).ConfigureAwait(false);
             }
+            catch (TimeoutException)
+            {
+                // The drain gave up on a wedged renderer, which means renderTask is being
+                // ABANDONED still running. Observe its eventual fault explicitly: an abandoned
+                // task's unobserved exception escalates at finalisation under test runners (it
+                // crashed the CI unit job) and is noise-with-consequences anywhere else.
+                _ = renderTask.ContinueWith(
+                    static t => _ = t.Exception,
+                    CancellationToken.None,
+                    TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default);
+            }
             catch (Exception)
             {
                 // Swallowed by design; see above.

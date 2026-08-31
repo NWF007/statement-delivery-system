@@ -38,6 +38,31 @@ public sealed class RenderStreamBridgeTests
     /// <summary>The test's own patience. Far above the bridge's drain timeout, far below a hang.</summary>
     private static readonly TimeSpan TestPatience = TimeSpan.FromSeconds(30);
 
+    /// <summary>
+    /// The patience guard, made abandonment-safe. The first version was bare
+    /// <c>Task.WhenAny(call, Task.Delay(...))</c>: when the DELAY won on a slow CI runner, the
+    /// still-running call was abandoned, later faulted with the test's own
+    /// StorageOutageException, and the unobserved exception crashed the whole test process at
+    /// shutdown - the unit job's first real failure on Linux. If the timeout wins, the loser is
+    /// explicitly observed before the test fails.
+    /// </summary>
+    private static async Task<Task> WithPatienceAsync(Task call)
+    {
+        Task winner = await Task.WhenAny(
+            call, Task.Delay(TestPatience, TestContext.Current.CancellationToken)).ConfigureAwait(true);
+
+        if (!ReferenceEquals(winner, call))
+        {
+            _ = call.ContinueWith(
+                static t => _ = t.Exception,
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+        }
+
+        return winner;
+    }
+
     [Fact]
     public async Task RenderPipeline_WriterThrowsOnLargeDocument_DoesNotWedgeSlot()
     {
@@ -57,7 +82,7 @@ public sealed class RenderStreamBridgeTests
             TimeProvider.System,
             CancellationToken.None);
 
-        Task winner = await Task.WhenAny(call, Task.Delay(TestPatience, TestContext.Current.CancellationToken)).ConfigureAwait(true);
+        Task winner = await WithPatienceAsync(call).ConfigureAwait(true);
 
         winner.ShouldBe((Task)call,
             "the bridge must complete when the writer faults - a render slot wedged behind a paused "
@@ -84,7 +109,7 @@ public sealed class RenderStreamBridgeTests
             TimeProvider.System,
             CancellationToken.None);
 
-        Task winner = await Task.WhenAny(call, Task.Delay(TestPatience, TestContext.Current.CancellationToken)).ConfigureAwait(true);
+        Task winner = await WithPatienceAsync(call).ConfigureAwait(true);
         winner.ShouldBe((Task)call, "see the wedge test");
 
         StorageOutageException thrown =
@@ -117,7 +142,7 @@ public sealed class RenderStreamBridgeTests
         ];
 
         Task allFailed = Task.WhenAll(failures);
-        Task winner = await Task.WhenAny(allFailed, Task.Delay(TestPatience, TestContext.Current.CancellationToken)).ConfigureAwait(true);
+        Task winner = await WithPatienceAsync(allFailed).ConfigureAwait(true);
         winner.ShouldBe(allFailed, "every failing call must complete; none may wedge");
         _ = await Should.ThrowAsync<StorageOutageException>(() => allFailed).ConfigureAwait(true);
 

@@ -165,10 +165,21 @@ public sealed partial class MigrationScriptTests
 
             foreach (Match match in CreateIndex().Matches(code))
             {
+                // ON ONLY <partitioned parent> is exempt, and principledly so: it is metadata
+                // only - no table scan, no long lock, at ANY size - and it is PostgreSQL's
+                // sanctioned answer for partitioned parents, where CONCURRENTLY is refused
+                // outright (SQLSTATE 0A000 - learned from V019's first real execution in CI).
+                // The per-child builds that follow it are dynamic SQL whose safety contract is
+                // documented in the script; static text cannot validate them.
+                if (match.Groups["only"].Success)
+                {
+                    continue;
+                }
+
                 string table = match.Groups["table"].Value;
                 code.ShouldContain(
                     $"CREATE TABLE IF NOT EXISTS {table}",
-                    customMessage: $"{name} indexes {table} without creating it in the same script; use CREATE INDEX CONCURRENTLY in a script of its own");
+                    customMessage: $"{name} indexes {table} without creating it in the same script; use CREATE INDEX CONCURRENTLY in a script of its own (or ON ONLY + per-child builds for a partitioned parent)");
             }
         }
     }
@@ -322,6 +333,6 @@ public sealed partial class MigrationScriptTests
     [GeneratedRegex(@"VALIDATE\s+CONSTRAINT\s+(?<constraint>\w+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
     private static partial Regex ValidateConstraint();
 
-    [GeneratedRegex(@"CREATE\s+INDEX\s+(?!CONCURRENTLY)(?:IF\s+NOT\s+EXISTS\s+)?\w+\s+ON\s+(?<table>\w+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
+    [GeneratedRegex(@"CREATE\s+INDEX\s+(?!CONCURRENTLY)(?:IF\s+NOT\s+EXISTS\s+)?\w+\s+ON\s+(?<only>ONLY\s+)?(?<table>\w+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
     private static partial Regex CreateIndex();
 }

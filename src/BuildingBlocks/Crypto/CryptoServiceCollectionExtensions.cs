@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using StatementDelivery.Crypto.Framing;
 using StatementDelivery.Crypto.Keys;
 
@@ -44,7 +45,14 @@ public static class CryptoServiceCollectionExtensions
             .ValidateDataAnnotations()
             .ValidateOnStart();
 
-        builder.Services.AddSingleton<IStreamingCipher, FramedAeadCipher>();
+        // Factory registration, NOT AddSingleton<IStreamingCipher, FramedAeadCipher>():
+        // the cipher has two public constructors (options for DI, int frame size for tests),
+        // and DI activation refuses ambiguous constructors - which made every host that calls
+        // AddCrypto fail at build validation. Found by the Prompt 7 endpoint-enumeration test,
+        // which is the first thing that ever actually CONSTRUCTED these hosts on this
+        // Docker-less machine.
+        builder.Services.AddSingleton<IStreamingCipher>(static sp =>
+            new FramedAeadCipher(sp.GetRequiredService<IOptions<CipherOptions>>()));
 
         KeyProviderKind kind = Enum.TryParse(
             builder.Configuration[ProviderConfigurationKey], ignoreCase: true, out KeyProviderKind parsed)
