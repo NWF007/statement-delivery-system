@@ -66,7 +66,11 @@ public sealed class GenerationResilienceTests
             customMessage: "last_error carries the exception TYPE so an operator reads 'fix the data', not 'wait it out'");
 
         // And the run itself COMPLETED - quarantine is bookkeeping, not failure.
-        (await repo.FindAsync(run.Id, ct).ConfigureAwait(true))!.Status.ShouldBe(RunStatus.Completed);
+        // The status flip is the ORCHESTRATOR's monitor tick, up to one interval after the
+        // counters go terminal - asserting immediately races it.
+        await WaitUntilAsync(
+            async () => (await repo.FindAsync(run.Id, ct).ConfigureAwait(true))!.Status == RunStatus.Completed,
+            TimeSpan.FromSeconds(30), "the run never transitioned to COMPLETED after its items finished", ct).ConfigureAwait(true);
 
         // Retry is the operator's deliberate act: reset, heal the ledger, and the item completes.
         ledger.SetFaults(); // poison list emptied
@@ -129,7 +133,11 @@ public sealed class GenerationResilienceTests
             .ConfigureAwait(true);
         final.Done.ShouldBe(40);
         final.FailedFinal.ShouldBe(0);
-        (await repo.FindAsync(run.Id, ct).ConfigureAwait(true))!.Status.ShouldBe(RunStatus.Completed);
+        // The status flip is the ORCHESTRATOR's monitor tick, up to one interval after the
+        // counters go terminal - asserting immediately races it.
+        await WaitUntilAsync(
+            async () => (await repo.FindAsync(run.Id, ct).ConfigureAwait(true))!.Status == RunStatus.Completed,
+            TimeSpan.FromSeconds(30), "the run never transitioned to COMPLETED after its items finished", ct).ConfigureAwait(true);
     }
 
     [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]

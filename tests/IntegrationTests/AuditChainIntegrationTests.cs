@@ -111,6 +111,15 @@ public sealed class AuditChainIntegrationTests
 
             long startSeq = await CurrentSeqAsync(chainId, cancellationToken).ConfigureAwait(true);
 
+            // Pre-warm ONE connection before the storm: Npgsql bootstraps its type catalogue on
+            // the data source's first physical open, and fifty first-opens racing that one-time
+            // bootstrap on a loaded runner blow the five-second connect timeout. One quiet open
+            // pays the cost once; production pools warm the same way.
+            await using (NpgsqlConnection warmup =
+                await factory.OpenAsync(ConnectionIntent.Write, cancellationToken).ConfigureAwait(true))
+            {
+            }
+
             using var barrier = new Barrier(ConcurrentWriters);
 
             AuditReceipt[] receipts = await Task.WhenAll(Enumerable.Range(0, ConcurrentWriters).Select(index =>
