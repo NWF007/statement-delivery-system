@@ -100,11 +100,6 @@ public static class DownloadGatewayExtensions
     /// </summary>
     public const string PerAddressPolicy = "per-address";
 
-    /// <summary>
-    /// The process-wide concurrency limit applied to streaming responses.
-    /// </summary>
-    public const string ConcurrentDownloadsPolicy = "concurrent-downloads";
-
     // =========================================================================================
     //  ⚠  DO NOT ADD A PER-TOKEN ATTEMPT LIMIT AND IMAGINE IT HELPS AGAINST GUESSING.
     //
@@ -228,7 +223,35 @@ public static class DownloadGatewayExtensions
             // A GLOBAL limiter, not just a named policy. A named policy only protects the routes
             // that remember to opt in; on an unauthenticated surface the default must be protected
             // and the exception must be explicit, not the other way round.
-            limiter.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(httpContext =>
+            //
+            // CHAINED, because RequireRateLimiting cannot stack: attaching a second policy to the
+            // redeem endpoint silently replaced the first, and the concurrency guard spent its
+            // whole life dead until the first real execution showed six parallel redemptions all
+            // getting through a permit of one. The global chain composes with the endpoint's
+            // per-address policy instead of competing with it: leg one is the per-address window
+            // below, leg two admits everything except download paths, which pass through a
+            // per-address concurrency permit sized by MaxConcurrentDownloads.
+            limiter.GlobalLimiter = PartitionedRateLimiter.CreateChained(
+                PartitionedRateLimiter.Create<HttpContext, string>(static httpContext =>
+                {
+                    if (!httpContext.Request.Path.StartsWithSegments("/v1/d", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return RateLimitPartition.GetNoLimiter("not-a-download");
+                    }
+
+                    IOptions<GatewayRateLimitOptions> options =
+                        httpContext.RequestServices.GetRequiredService<IOptions<GatewayRateLimitOptions>>();
+
+                    return RateLimitPartition.GetConcurrencyLimiter(
+                        "download:" + ClientPartition(httpContext),
+                        _ => new ConcurrencyLimiterOptions
+                        {
+                            PermitLimit = options.Value.MaxConcurrentDownloads,
+                            QueueLimit = 0,
+                            QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                        });
+                }),
+                PartitionedRateLimiter.Create<HttpContext, string>(httpContext =>
             {
                 // Health and readiness probes come from the orchestrator on a schedule and would
                 // otherwise consume the node address's entire budget.
@@ -250,7 +273,7 @@ public static class DownloadGatewayExtensions
                         SegmentsPerWindow = limits.SegmentsPerWindow,
                         QueueLimit = 0,
                     });
-            });
+            }));
 
             limiter.AddPolicy(PerAddressPolicy, static httpContext =>
             {
@@ -269,13 +292,6 @@ public static class DownloadGatewayExtensions
                     });
             });
 
-            limiter.AddConcurrencyLimiter(ConcurrentDownloadsPolicy, options =>
-            {
-                GatewayRateLimitOptions limits = configured;
-                options.PermitLimit = limits.MaxConcurrentDownloads;
-                options.QueueLimit = 0;
-                options.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
-            });
         });
 
         builder.Services.AddApiVersioning(options =>

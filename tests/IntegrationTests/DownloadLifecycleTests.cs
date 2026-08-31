@@ -308,17 +308,21 @@ public sealed class DownloadLifecycleTests
         // CryptographicException, so the pre-existing catch never saw it.
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
 
-        // Two full frames plus a tail, so there is a SECOND frame to corrupt and a first frame's
-        // worth of bytes (64 KiB) already delivered when it fails.
-        const int SizeBytes = (128 * 1024) + 512;
+        // Thirty-two full frames plus a tail: the corruption sits in the LAST full frame, so
+        // roughly 2 MiB must stream first - far past any response buffering, which is what
+        // guarantees the client has real bytes in hand when the abort lands. (The original two
+        // frames fit entirely inside the server's buffers; the client saw zero bytes and the
+        // test could not tell the abort path from the pre-response path.)
+        const int FullFrames = 32;
+        const int SizeBytes = (FullFrames * 65536) + 512;
 
         SeededStatement seeded = await DownloadScenario
             .SeedAsync(_postgres, _minio, sizeBytes: SizeBytes, cancellationToken: cancellationToken).ConfigureAwait(true);
 
-        // Header(48) + frame0(4 + 65536 + 16) = 65604 is where frame 1 begins; +4 skips its length
-        // prefix, +100 lands inside its ciphertext.
-        const int SecondFramePayload = 48 + 4 + 65536 + 16 + 4 + 100;
-        await CorruptObjectByteAsync(seeded.StorageKey, SecondFramePayload, cancellationToken).ConfigureAwait(true);
+        // Header(48) + N-1 whole frames (4 + 65536 + 16 each) is where the last full frame
+        // begins; +4 skips its length prefix, +100 lands inside its ciphertext.
+        const int LastFramePayload = 48 + ((FullFrames - 1) * (4 + 65536 + 16)) + 4 + 100;
+        await CorruptObjectByteAsync(seeded.StorageKey, LastFramePayload, cancellationToken).ConfigureAwait(true);
 
         using DeliveryApiFactory api = CreateApi();
         using DownloadGatewayFactory gateway = CreateGateway();

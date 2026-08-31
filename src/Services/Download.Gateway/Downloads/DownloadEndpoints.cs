@@ -66,8 +66,11 @@ public static class DownloadEndpoints
             // The distributed per-address budget is the ANTI-ENUMERATION control, and it is the one
             // that has to be counted fleet-wide: a guessing script spread across replicas would walk
             // straight past a per-process counter.
+            // ONE RequireRateLimiting only: the attribute REPLACES rather than stacks, and the
+            // first real execution proved the second call silently killed the first policy. The
+            // concurrent-downloads guard rides the GLOBAL limiter chain instead (see
+            // DownloadGatewayExtensions), which composes with this endpoint policy.
             .RequireRateLimiting(Configuration.DownloadGatewayExtensions.PerAddressPolicy)
-            .RequireRateLimiting(Configuration.DownloadGatewayExtensions.ConcurrentDownloadsPolicy)
             .RequireDistributedRateLimitPerAddress(
                 Configuration.DownloadGatewayExtensions.RedeemRules(
                     app.Services.GetRequiredService<IOptions<Configuration.GatewayRateLimitOptions>>().Value))

@@ -182,9 +182,18 @@ public sealed class EncryptedStorageTests
                     cancellationToken))
                 .ConfigureAwait(true);
 
-            error.StatusCode.ShouldBe(
-                System.Net.HttpStatusCode.Forbidden,
-                $"the locked version must refuse deletion; got {error.ErrorCode}: {error.Message}");
+            // AWS S3 answers 403 AccessDenied; MinIO answers 400 InvalidRequest with "Object is
+            // WORM protected". The property under test is the REFUSAL, not the dialect.
+            ((int)error.StatusCode is 403 or 400).ShouldBeTrue(
+                $"the locked version must refuse deletion; got {(int)error.StatusCode} {error.ErrorCode}: {error.Message}");
+
+            // And the object is still there - the refusal was not cosmetic.
+            GetObjectMetadataResponse survived = await client
+                .GetObjectMetadataAsync(
+                    new GetObjectMetadataRequest { BucketName = MinioFixture.BucketName, Key = stored.Key },
+                    cancellationToken)
+                .ConfigureAwait(true);
+            survived.VersionId.ShouldBe(metadata.VersionId);
 
             // Still there, and still readable. A retention that blocked deletion by corrupting the
             // object would satisfy the assertion above and destroy the record anyway.

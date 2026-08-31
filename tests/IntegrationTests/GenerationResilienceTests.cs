@@ -193,8 +193,11 @@ public sealed class GenerationResilienceTests
             new System.Net.Http.Headers.AuthenticationHeaderValue(
                 "Bearer", DeliveryApiFactory.TokenFor(seeded.CustomerId));
 
+        // Bracket the seeded period: the from/to range is REQUIRED and capped at 84 months by
+        // the API contract, and the old fixed 2020-2030 span was both 120 months wide and
+        // nowhere near the seeder's deliberately-historical periods.
         var listUri = new Uri(
-            $"/v1/customers/{seeded.CustomerId}/statements?from=2020-01-01&to=2030-01-01&limit=10",
+            $"/v1/customers/{seeded.CustomerId}/statements?from={seeded.Period.AddMonths(-1):yyyy-MM-dd}&to={seeded.Period.AddMonths(2):yyyy-MM-dd}&limit=10",
             UriKind.Relative);
 
         // Warm-up so the measurement is the database path, not host startup.
@@ -315,6 +318,15 @@ internal static class GenerationSeed
 
         await using (NpgsqlConnection connection = await postgres.OpenAdminAsync(ct).ConfigureAwait(false))
         {
+            // The isolation anchor lives decades before any provisioned partition, and a render
+            // for an unprovisioned month dies at the INSERT ("no partition of relation
+            // statement found"). Historical backfill provisions its partitions first in
+            // production too; the V003 helper is that procedure.
+            _ = await connection.ExecuteAsync(new CommandDefinition(
+                "SELECT ensure_range_partitions('statement'::regclass, 'month', 3, @from);",
+                new { @from = new DateTimeOffset(period.Start.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero) },
+                commandTimeout: 60, cancellationToken: ct)).ConfigureAwait(false);
+
             _ = await connection.ExecuteAsync(new CommandDefinition(
                 """
                 INSERT INTO customer (id, external_ref, status) VALUES (@customer, @ref, 'ACTIVE');

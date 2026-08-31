@@ -700,28 +700,34 @@ public sealed class RetentionLifecycleTests
 
         _ = await harness.Erasure.RunAsync(fenceToken: 32, ct).ConfigureAwait(true);
 
-        // The block's REASON changes: hold released, but the statement's statutory retention is
-        // pushed back into the future - the next pass blocks on the statute instead.
+        // THE TRANSITION. Under the corrected semantics retention never blocks an erasure
+        // (crypto-erasure is what reconciles the two statutes), so the reachable state change
+        // is hold released -> erasure completes. That transition is a new fact and must land
+        // on the chain, exactly as the blocked state did.
         await using (NpgsqlConnection admin = await _postgres.OpenAdminAsync(ct).ConfigureAwait(true))
         {
             _ = await admin.ExecuteAsync(new CommandDefinition(
                 """
                 UPDATE legal_hold SET released_at = now(), released_by = 'test'
                  WHERE case_reference = 'CASE-2026-CHANGE';
-                UPDATE statement SET retain_until = @future WHERE customer_id = @id;
                 """,
-                new { id = published.CustomerId, future = DateOnly.FromDateTime(DateTime.UtcNow).AddYears(5) },
+                new { id = published.CustomerId },
                 commandTimeout: 30, cancellationToken: ct)).ConfigureAwait(true);
         }
 
         _ = await harness.Erasure.RunAsync(fenceToken: 33, ct).ConfigureAwait(true);
 
         await using NpgsqlConnection connection = await _postgres.OpenAdminAsync(ct).ConfigureAwait(true);
-        long audits = await connection.ExecuteScalarAsync<long>(new CommandDefinition(
-            "SELECT count(*) FROM audit_event WHERE customer_id = @id AND action = 'ERASURE_BLOCKED';",
+        (long blocked, long completed) = await connection.QuerySingleAsync<(long, long)>(new CommandDefinition(
+            """
+            SELECT count(*) FILTER (WHERE action = 'ERASURE_BLOCKED'),
+                   count(*) FILTER (WHERE action = 'ERASURE_COMPLETED')
+              FROM audit_event WHERE customer_id = @id;
+            """,
             new { id = published.CustomerId },
             commandTimeout: 30, cancellationToken: ct)).ConfigureAwait(true);
-        audits.ShouldBe(2, "a CHANGED reason is a new fact and must land on the chain");
+        blocked.ShouldBe(1, "the hold blocked exactly one pass, audited once");
+        completed.ShouldBe(1, "the release is a new fact and its completion must land on the chain");
     }
 
     [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]
