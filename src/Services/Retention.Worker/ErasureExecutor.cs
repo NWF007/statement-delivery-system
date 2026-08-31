@@ -122,13 +122,19 @@ public sealed partial class ErasureExecutor
         // is a store hold with no database row, and destruction is the one operation that
         // residue must still stop.
         HoldState holds = await _holds.ResolveForCustomerAsync(customer, ct).ConfigureAwait(false);
-        DateOnly? maxRetainUntil = await _statements.MaxRetainUntilForCustomerAsync(customer, ct)
-            .ConfigureAwait(false);
 
+        // RETENTION IS NEUTRAL HERE, DELIBERATELY. Feeding the customer's max retain_until into
+        // the engine blocked every erasure as RetainUntilFuture for seven years - but
+        // crypto-erasure is the mechanism that satisfies both statutes at once: the ciphertext
+        // object REMAINS retained for FICA (the executor never deletes it), while its
+        // readability dies for POPIA. The engine sees retention as already-elapsed so that the
+        // decision reduces to the true erasure blockers: a legal hold in either layer, or a key
+        // already destroyed. Erasure_Executes_ObjectSurvives_ReadPathDies_AuditPreserved pins
+        // exactly this.
         RetentionDecision decision = RetentionDecisionEngine.Decide(RetentionContextFactory.Create(
             holds,
             customerKeyDestroyed: false,
-            maxRetainUntil ?? today,
+            retainUntil: today,
             objectInfo: null,
             today));
 

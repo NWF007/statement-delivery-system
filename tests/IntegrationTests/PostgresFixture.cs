@@ -134,21 +134,6 @@ public sealed class PostgresFixture : IAsyncLifetime
         analyze.CommandText = "ANALYZE;";
         _ = await analyze.ExecuteNonQueryAsync().ConfigureAwait(false);
 
-        // V001 caps connections per role (app_generation at 40) so that a service bypassing
-        // PgBouncer fails loudly instead of exhausting backends. These tests ARE that bypass, on
-        // purpose: there is no pooler in the container, xUnit runs collections in parallel, and
-        // the claim-contention tests alone open fifty direct connections as one role. The caps
-        // stay in the schema the compose stack and production run under; this container lifts
-        // them because here the "misconfigured fleet" is the test harness itself.
-        await using NpgsqlCommand uncap = connection.CreateCommand();
-        uncap.CommandText = """
-            ALTER ROLE app_delivery   CONNECTION LIMIT -1;
-            ALTER ROLE app_download   CONNECTION LIMIT -1;
-            ALTER ROLE app_generation CONNECTION LIMIT -1;
-            ALTER ROLE app_retention  CONNECTION LIMIT -1;
-            """;
-        _ = await uncap.ExecuteNonQueryAsync().ConfigureAwait(false);
-
         Started = true;
     }
 
@@ -222,6 +207,30 @@ public sealed class PostgresFixture : IAsyncLifetime
     /// </remarks>
     /// <param name="connectionString">An administrative connection string for the target database.</param>
     private static void Migrate(string connectionString)
+    {
+        MigrateCore(connectionString);
+
+        // V001 caps connections per role (app_generation at 40) so that a service bypassing
+        // PgBouncer fails loudly instead of exhausting backends. These tests ARE that bypass, on
+        // purpose: no pooler in the container, xUnit collections in parallel, and the
+        // claim-contention tests alone open fifty direct connections as one role. The caps stay
+        // in the schema the compose stack and production run under. The uncap lives HERE, after
+        // EVERY migration run, because roles are CLUSTER-wide: building the replica database
+        // re-runs V001 and silently re-capped them mid-suite the moment the replica-lag test
+        // got far enough to build its replica.
+        using var uncapConnection = new NpgsqlConnection(connectionString);
+        uncapConnection.Open();
+        using NpgsqlCommand uncap = uncapConnection.CreateCommand();
+        uncap.CommandText = """
+            ALTER ROLE app_delivery   CONNECTION LIMIT -1;
+            ALTER ROLE app_download   CONNECTION LIMIT -1;
+            ALTER ROLE app_generation CONNECTION LIMIT -1;
+            ALTER ROLE app_retention  CONNECTION LIMIT -1;
+            """;
+        _ = uncap.ExecuteNonQuery();
+    }
+
+    private static void MigrateCore(string connectionString)
     {
         foreach (bool nonTransactional in (bool[])[false, true])
         {

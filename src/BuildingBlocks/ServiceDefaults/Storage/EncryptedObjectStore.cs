@@ -213,6 +213,7 @@ public sealed class S3StatementContentStore : IStatementContentStore, IStatement
 {
     private readonly IAmazonS3 _s3;
     private readonly SpoolOptions _spool;
+    private readonly TimeProvider _time;
     private readonly IDataKeyBroker _keys;
     private readonly ObjectStorageOptions _storage;
     private readonly ObjectLockOptions _lock;
@@ -229,6 +230,7 @@ public sealed class S3StatementContentStore : IStatementContentStore, IStatement
     /// <param name="retention">Retention options.</param>
     /// <param name="logger">Logger. A decryption failure is silent to the caller and must not be silent here.</param>
     /// <param name="spool">Spool configuration for unknown-length uploads.</param>
+    /// <param name="time">Clock, for the lock-only-when-future decision. System time when omitted.</param>
     public S3StatementContentStore(
         IAmazonS3 s3,
         IDataKeyBroker keys,
@@ -237,8 +239,10 @@ public sealed class S3StatementContentStore : IStatementContentStore, IStatement
         IOptions<CipherOptions> cipher,
         IOptions<RetentionOptions>? retention = null,
         ILogger<S3StatementContentStore>? logger = null,
-        IOptions<SpoolOptions>? spool = null)
+        IOptions<SpoolOptions>? spool = null,
+        TimeProvider? time = null)
     {
+        _time = time ?? TimeProvider.System;
         _spool = spool?.Value ?? new SpoolOptions();
         ArgumentNullException.ThrowIfNull(storage);
         ArgumentNullException.ThrowIfNull(objectLock);
@@ -522,15 +526,26 @@ public sealed class S3StatementContentStore : IStatementContentStore, IStatement
                 InputStream = spool,
                 AutoCloseStream = false,
                 ContentType = "application/octet-stream",
-
-                // ⚠ LOCK EXPIRY IS NOT DELETION. When this date passes the object merely becomes
-                // ELIGIBLE for deletion - nothing removes it, and the storage bill continues for as
-                // long as it exists. An explicit purge job is still required (Prompt 6). A system
-                // that set a retention and assumed expiry meant cleanup would pay to store
-                // 2.5 billion objects forever and would believe it had a retention policy.
-                ObjectLockMode = _lock.PutMode,
-                ObjectLockRetainUntilDate = retainUntil.UtcDateTime,
             };
+
+            // ⚠ LOCK EXPIRY IS NOT DELETION. When this date passes the object merely becomes
+            // ELIGIBLE for deletion - nothing removes it, and the storage bill continues for as
+            // long as it exists. An explicit purge job is still required (Prompt 6). A system
+            // that set a retention and assumed expiry meant cleanup would pay to store
+            // 2.5 billion objects forever and would believe it had a retention policy.
+            //
+            // AND THE LOCK IS CONDITIONAL ON HAVING SOMETHING TO PROTECT. A statement written for
+            // a period whose statutory retention has already elapsed computes a retain-until in
+            // the past, and S3 refuses that outright ("the retain until date must be in the
+            // future" - proven by CI's first real renders, which seed historical periods). An
+            // already-expired object needs no WORM window: it is immediately purge-eligible, the
+            // row's retain_until still says so, and inventing a longer date here would be the
+            // silent extension of retention this system refuses to make.
+            if (retainUntil > _time.GetUtcNow())
+            {
+                request.ObjectLockMode = _lock.PutMode;
+                request.ObjectLockRetainUntilDate = retainUntil.UtcDateTime;
+            }
 
             // Always declared, from the spool's REAL length - never inferred, never left to
             // chunked transfer encoding, which S3-compatible implementations handle inconsistently.

@@ -389,24 +389,13 @@ public static class ServiceDefaultsExtensions
                 context.ProblemDetails.Extensions["traceId"] =
                     Activity.Current?.TraceId.ToString() ?? context.HttpContext.TraceIdentifier;
 
-                // A DENIAL NAMES NOTHING. On the deny statuses the request path is exactly what
-                // the response must not confirm - a statement id on a 404 is an existence oracle,
-                // and denial bodies must be indistinguishable across causes
-                // (DownloadLifecycleTests pins them byte-identical). Errors keep the redacted
-                // path: the caller already knows what they called, and the operator needs it.
-                int status = context.ProblemDetails.Status ?? context.HttpContext.Response.StatusCode;
-                if (status is StatusCodes.Status401Unauthorized
-                    or StatusCodes.Status403Forbidden
-                    or StatusCodes.Status404NotFound
-                    or StatusCodes.Status429TooManyRequests)
-                {
-                    context.ProblemDetails.Instance = null;
-                }
-                else
-                {
-                    context.ProblemDetails.Instance ??=
-                        SensitiveDataRedactor.RedactDownloadPath(context.HttpContext.Request.Path.Value);
-                }
+                // A DENIAL NAMES NOTHING IT WAS ASKED ABOUT. The instance keeps the route SHAPE
+                // (an operator greps for it) but every identifier is redacted: the download
+                // token because it IS the credential, and any resource id because a 404 that
+                // echoes the id it denies knowing is an existence oracle - and denial bodies
+                // must stay byte-identical across causes (DownloadLifecycleTests pins this).
+                context.ProblemDetails.Instance ??=
+                    SensitiveDataRedactor.RedactPathIdentifiers(context.HttpContext.Request.Path.Value);
             });
 
         builder.Services.AddExceptionHandler<GlobalExceptionHandler>();

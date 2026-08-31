@@ -69,7 +69,7 @@ public sealed partial class GlobalExceptionHandler : IExceptionHandler
         LogUnhandledException(
             _logger,
             exception,
-            SensitiveDataRedactor.RedactDownloadPath(httpContext.Request.Path.Value) ?? "/",
+            SensitiveDataRedactor.RedactPathIdentifiers(httpContext.Request.Path.Value) ?? "/",
             traceId);
 
         httpContext.Response.StatusCode = StatusCodes.Status500InternalServerError;
@@ -84,7 +84,7 @@ public sealed partial class GlobalExceptionHandler : IExceptionHandler
                 Title = "An unexpected error occurred.",
                 Status = StatusCodes.Status500InternalServerError,
                 Detail = _environment.IsDevelopment() ? exception.Message : GenericDetail,
-                Instance = SensitiveDataRedactor.RedactDownloadPath(httpContext.Request.Path.Value),
+                Instance = SensitiveDataRedactor.RedactPathIdentifiers(httpContext.Request.Path.Value),
             },
         }).ConfigureAwait(false);
     }

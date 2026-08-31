@@ -1391,8 +1391,12 @@ public sealed class DownloadLifecycleTests
     {
         await using NpgsqlConnection connection = await _postgres.OpenAdminAsync(cancellationToken).ConfigureAwait(false);
 
-        return await connection.ExecuteScalarAsync<DateTimeOffset>(new CommandDefinition(
+        // Read as DateTime: Dapper's scalar path converts with Convert.ChangeType, which has
+        // no DateTime-to-DateTimeOffset conversion and throws InvalidCastException.
+        DateTime now = await connection.ExecuteScalarAsync<DateTime>(new CommandDefinition(
             "SELECT now();", commandTimeout: 30, cancellationToken: cancellationToken)).ConfigureAwait(false);
+
+        return new DateTimeOffset(now, TimeSpan.Zero);
     }
 
     private static async Task<long> DrainAsync(Stream stream, CancellationToken cancellationToken)

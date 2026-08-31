@@ -153,6 +153,23 @@ public static partial class SensitiveDataRedactor
     }
 
     /// <summary>
+    /// Redacts a request path for use where the path may be ECHOED BACK to a caller: the
+    /// download rule first, then every GUID path segment.
+    /// </summary>
+    /// <remarks>
+    /// ProblemDetails.Instance is the consumer. A denial that echoes the identifier it denies
+    /// knowing is an existence oracle, and denial bodies must not vary by resource - but the
+    /// route SHAPE stays, so an operator can still see which endpoint produced the document.
+    /// </remarks>
+    /// <param name="value">A URL path.</param>
+    /// <returns>The path with the download tail and all GUID segments redacted.</returns>
+    public static string? RedactPathIdentifiers(string? value)
+    {
+        string? redacted = RedactDownloadPath(value);
+        return string.IsNullOrEmpty(redacted) ? redacted : GuidSegment().Replace(redacted, RedactedMarker);
+    }
+
+    /// <summary>
     /// Applies both rules to one telemetry attribute.
     /// </summary>
     /// <param name="key">The attribute key.</param>
@@ -171,6 +188,13 @@ public static partial class SensitiveDataRedactor
     /// <summary>
     /// Matches the download route prefix and everything following it, up to a query or fragment.
     /// </summary>
+    /// <summary>Matches a GUID wherever it appears as its own path segment.</summary>
+    [GeneratedRegex(
+        @"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+        RegexOptions.CultureInvariant,
+        matchTimeoutMilliseconds: 1000)]
+    private static partial Regex GuidSegment();
+
     [GeneratedRegex(
         @"(?<prefix>/v1/d/)[^\s?#]*",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
