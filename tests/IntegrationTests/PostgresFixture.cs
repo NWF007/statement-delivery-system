@@ -108,6 +108,13 @@ public sealed class PostgresFixture : IAsyncLifetime
             return;
         }
 
+        // The DateOnly handlers normally register when a host wires Persistence into DI - but a
+        // FILTERED run (the CI concurrency loop runs one test twenty times in its own process)
+        // can reach direct-Dapper seeding before any host exists, and the first DateOnly
+        // parameter throws. The fixture is every integration test's chokepoint, so it registers
+        // them unconditionally.
+        StatementDelivery.Persistence.Dapper.DapperConfiguration.EnsureConfigured();
+
         _container = new PostgreSqlBuilder("postgres:17-alpine")
             .WithDatabase("statements")
             .WithUsername("postgres")
