@@ -220,9 +220,15 @@ public sealed class CryptoBoundaryTests
 
             foreach (string candidate in (string[])[project.Name, "StatementDelivery." + project.Name])
             {
-                if (File.Exists(Path.Combine(AppContext.BaseDirectory, candidate + ".dll")))
+                // Case-insensitive on purpose: RenderHash's csproj sets AssemblyName to
+                // lowercase `renderhash` for CLI ergonomics, and File.Exists("RenderHash.dll")
+                // finds it only on a case-insensitive filesystem. This rule's own first Linux
+                // execution (every earlier CI run failed the unit step first and skipped this
+                // one) is what exposed the Windows-only probe.
+                string? actual = OutputAssemblies.Value.GetValueOrDefault(candidate);
+                if (actual is not null)
                 {
-                    found = candidate;
+                    found = actual;
                     break;
                 }
             }
@@ -250,6 +256,12 @@ public sealed class CryptoBoundaryTests
             .. module.GetMemberReferences().Select(static reference => reference.FullName),
         ];
     }
+
+    /// <summary>Assembly base names in the test output, keyed case-insensitively, valued with real casing.</summary>
+    private static readonly Lazy<Dictionary<string, string>> OutputAssemblies = new(static () =>
+        Directory.EnumerateFiles(AppContext.BaseDirectory, "*.dll")
+            .Select(static file => Path.GetFileNameWithoutExtension(file))
+            .ToDictionary(static name => name, static name => name, StringComparer.OrdinalIgnoreCase));
 
     private static string LocateAssembly(string assemblyName)
     {

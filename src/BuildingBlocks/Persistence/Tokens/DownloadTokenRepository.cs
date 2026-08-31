@@ -171,7 +171,7 @@ public sealed class DownloadTokenRepository : IDownloadTokenRepository
     private const string ConsumeSql = """
         UPDATE download_token
         SET    consumed_at         = now(),
-               consumed_by_ip      = @ip,
+               consumed_by_ip      = @ip::inet,
                consumed_by_ua_hash = @uaHash
         WHERE  token_sha256 = @hash
           AND  expires_at   > now()
@@ -209,7 +209,7 @@ public sealed class DownloadTokenRepository : IDownloadTokenRepository
             issued_at, expires_at, single_use, issued_to_ip)
         VALUES (
             @id, @statementId, @customerId, @statementPeriod, @hash,
-            @issuedAt, @expiresAt, @singleUse, @issuedToIp);
+            @issuedAt, @expiresAt, @singleUse, @issuedToIp::inet);
         """;
 
     /// <summary>

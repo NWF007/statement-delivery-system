@@ -53,21 +53,34 @@ public sealed class AuditChainIntegrationTests
         // disagree, every chain fails to verify from record one - and it would look like tampering.
         await using NpgsqlConnection connection = await _postgres.OpenAdminAsync(TestContext.Current.CancellationToken).ConfigureAwait(true);
 
-        List<(short ChainId, byte[] LastHash)> heads =
+        // A head equals its genesis only while the chain is untouched, and sibling tests
+        // legitimately advance chains in the shared database. Either way the seed is still
+        // provable: an unmoved head IS the seed, and a moved chain's first record carries the
+        // seed as its immutable prev_hash.
+        List<(short ChainId, long LastSeq, byte[] LastHash)> heads =
         [
-            .. await connection.QueryAsync<(short, byte[])>(
-                "SELECT chain_id, last_hash FROM audit_chain_head ORDER BY chain_id;").ConfigureAwait(true),
+            .. await connection.QueryAsync<(short, long, byte[])>(
+                "SELECT chain_id, last_seq, last_hash FROM audit_chain_head ORDER BY chain_id;").ConfigureAwait(true),
         ];
 
         heads.Count.ShouldBe(AuditHashing.DefaultChainCount);
 
-        foreach ((short chainId, byte[] lastHash) in heads)
+        foreach ((short chainId, long lastSeq, byte[] lastHash) in heads)
         {
-            lastHash.ShouldBe(AuditHashing.Genesis(chainId), $"chain {chainId} genesis must match the C# definition");
+            byte[] seeded = lastSeq == 0
+                ? lastHash
+                : await connection.QuerySingleAsync<byte[]>(
+                    "SELECT prev_hash FROM audit_event WHERE chain_id = @chainId AND chain_seq = 1;",
+                    new { chainId }).ConfigureAwait(true);
+
+            seeded.ShouldBe(AuditHashing.Genesis(chainId), $"chain {chainId} genesis must match the C# definition");
         }
 
-        // And they must all differ, or a record could be lifted between chains undetected.
-        heads.Select(h => Convert.ToHexStringLower(h.LastHash)).Distinct(StringComparer.Ordinal).Count()
+        // And the definitions must all differ, or a record could be lifted between chains
+        // undetected.
+        Enumerable.Range(0, AuditHashing.DefaultChainCount)
+            .Select(static chain => Convert.ToHexStringLower(AuditHashing.Genesis((short)chain)))
+            .Distinct(StringComparer.Ordinal).Count()
             .ShouldBe(AuditHashing.DefaultChainCount);
     }
 

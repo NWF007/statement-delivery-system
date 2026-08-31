@@ -166,7 +166,10 @@ public sealed class PostgresAuditWriter : IAuditWriter
                 sourceIp = entry.SourceIp,
                 userAgentHash = entry.UserAgentHash,
                 context,
-                occurredAt = entry.OccurredAt.ToUniversalTime(),
+                // The truncation the canonical form applies (AuditHashing.TruncateToMicroseconds):
+                // PostgreSQL rounds sub-microsecond input, and a stored value one microsecond above
+                // the hashed one fails verification forever.
+                occurredAt = AuditHashing.TruncateToMicroseconds(entry.OccurredAt.ToUniversalTime()),
                 prevHash = head.LastHash,
                 hash,
             },

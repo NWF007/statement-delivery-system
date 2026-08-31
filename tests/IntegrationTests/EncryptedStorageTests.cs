@@ -182,7 +182,9 @@ public sealed class EncryptedStorageTests
                     cancellationToken))
                 .ConfigureAwait(true);
 
-            error.StatusCode.ShouldBe(System.Net.HttpStatusCode.Forbidden);
+            error.StatusCode.ShouldBe(
+                System.Net.HttpStatusCode.Forbidden,
+                $"the locked version must refuse deletion; got {error.ErrorCode}: {error.Message}");
 
             // Still there, and still readable. A retention that blocked deletion by corrupting the
             // object would satisfy the assertion above and destroy the record anyway.
@@ -434,8 +436,18 @@ public sealed class EncryptedStorageTests
                     Binding = stored.Envelope.Binding with { StatementId = Guid.CreateVersion7() },
                 });
 
-            _ = await Should.ThrowAsync<CiphertextIntegrityException>(() =>
-                store.OpenReadAsync(tampered, cancellationToken)).ConfigureAwait(true);
+            // The open returns a lazily-verifying stream: frame AAD is checked as frames are
+            // read. The deception has to be CONSUMED to be caught - which is also true at the
+            // gateway, where the same read drives the response and aborts it mid-body.
+            _ = await Should.ThrowAsync<CiphertextIntegrityException>(async () =>
+            {
+                StatementContent? content = await store.OpenReadAsync(tampered, cancellationToken).ConfigureAwait(false);
+                content.ShouldNotBeNull();
+                await using (content.ConfigureAwait(false))
+                {
+                    await content.Stream.CopyToAsync(Stream.Null, cancellationToken).ConfigureAwait(false);
+                }
+            }).ConfigureAwait(true);
         }
     }
 

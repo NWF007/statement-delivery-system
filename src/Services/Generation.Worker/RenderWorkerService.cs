@@ -259,7 +259,7 @@ public sealed partial class RenderWorkerService : BackgroundService
                     item.ItemId, terminalReason, workerId, _options.MaxAttempts, CancellationToken.None)
                     .ConfigureAwait(false);
 
-                LogItemFailed(_logger, item.ItemId, item.Attempts, ex.GetType().Name);
+                LogItemFailed(_logger, ex, item.ItemId, item.Attempts, ex.GetType().Name);
             }
             catch (StaleClaimSupersededException)
             {
@@ -287,7 +287,7 @@ public sealed partial class RenderWorkerService : BackgroundService
                     LogStaleCompletion(_logger, item.ItemId);
                 }
 
-                LogItemFailed(_logger, item.ItemId, item.Attempts, ex.GetType().Name);
+                LogItemFailed(_logger, ex, item.ItemId, item.Attempts, ex.GetType().Name);
             }
         }
     }
@@ -329,7 +329,7 @@ public sealed partial class RenderWorkerService : BackgroundService
         EventId = 5011,
         Level = LogLevel.Warning,
         Message = "Item {ItemId} failed on attempt {Attempt}: {ExceptionType}")]
-    private static partial void LogItemFailed(ILogger logger, long itemId, int attempt, string exceptionType);
+    private static partial void LogItemFailed(ILogger logger, Exception exception, long itemId, int attempt, string exceptionType);
 
     [LoggerMessage(
         EventId = 5013,

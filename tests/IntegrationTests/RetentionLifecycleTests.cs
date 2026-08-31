@@ -892,11 +892,12 @@ public sealed class RetentionLifecycleTests
                 ct).ConfigureAwait(true);
         }
 
-        // Enough pages to cover all 256 shards in one tick, so the test does not depend on
-        // where the cursor happens to be pointing after other runs.
+        // Enough pages to cover every shard in one tick, so the test does not depend on where
+        // the cursor happens to be pointing after other runs. The scheme is 4096 shards
+        // (StorageKeyScheme.ShardCount) and an empty shard still costs its walk one page.
         using Harness harness = CreateHarness(options =>
         {
-            options.OrphanPagesPerTick = 300;
+            options.OrphanPagesPerTick = StatementDelivery.Domain.Statements.StorageKeyScheme.ShardCount + 64;
             options.OrphanPageSize = 1000;
         });
 
