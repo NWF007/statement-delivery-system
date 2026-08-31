@@ -236,20 +236,23 @@ public sealed class KeyHierarchyTests
 
         var customer = new CustomerId(Guid.NewGuid());
 
-        using (DataKeyLease _ = await cache.AcquireAsync(customer, 1024, TestContext.Current.CancellationToken).ConfigureAwait(true))
+        using (DataKeyLease lease = await cache.AcquireAsync(customer, TestContext.Current.CancellationToken).ConfigureAwait(true))
         {
+            lease.RecordBytes(1024);
             customerKeys.Calls.ShouldBe(1);
         }
 
-        using (DataKeyLease _ = await cache.AcquireAsync(customer, 1024, TestContext.Current.CancellationToken).ConfigureAwait(true))
+        using (DataKeyLease lease = await cache.AcquireAsync(customer, TestContext.Current.CancellationToken).ConfigureAwait(true))
         {
+            lease.RecordBytes(1024);
             customerKeys.Calls.ShouldBe(1, "within the window the cached key is reused");
         }
 
         clock.Advance(TimeSpan.FromMinutes(5));
 
-        using (DataKeyLease _ = await cache.AcquireAsync(customer, 1024, TestContext.Current.CancellationToken).ConfigureAwait(true))
+        using (DataKeyLease lease = await cache.AcquireAsync(customer, TestContext.Current.CancellationToken).ConfigureAwait(true))
         {
+            lease.RecordBytes(1024);
             customerKeys.Calls.ShouldBe(2, "past the max age a new key must be minted");
         }
     }
@@ -269,13 +272,16 @@ public sealed class KeyHierarchyTests
 
         for (int i = 0; i < 3; i++)
         {
-            using DataKeyLease _ = await cache.AcquireAsync(customer, 1, TestContext.Current.CancellationToken).ConfigureAwait(true);
+            using DataKeyLease lease = await cache.AcquireAsync(customer, TestContext.Current.CancellationToken).ConfigureAwait(true);
+            lease.RecordBytes(1);
         }
 
         customerKeys.Calls.ShouldBe(1);
 
-        using (DataKeyLease _ = await cache.AcquireAsync(customer, 1, TestContext.Current.CancellationToken).ConfigureAwait(true))
+        using (DataKeyLease lease = await cache.AcquireAsync(customer, TestContext.Current.CancellationToken).ConfigureAwait(true))
         {
+            lease.RecordBytes(1);
+
             // BLAST RADIUS, ENFORCED. A key recovered from a compromised worker decrypts at most
             // this many objects - so the bound is a security property, not a tuning knob.
             customerKeys.Calls.ShouldBe(2);
@@ -283,8 +289,11 @@ public sealed class KeyHierarchyTests
     }
 
     [Fact]
-    public async Task DekCache_ExpiresOnMaxBytes()
+    public async Task DataKeyLease_RecordBytes_DrivesByteBudgetRotation()
     {
+        // THE SETTLE-BASED BYTE BUDGET (audit HIGH 2). The old contract charged a caller-supplied
+        // ESTIMATE at acquire time; the streaming writer estimated zero and the budget went blind.
+        // Now the REAL count settles via RecordBytes, and rotation follows recorded spend.
         var clock = new TestClock(new DateTimeOffset(2026, 8, 27, 12, 0, 0, TimeSpan.Zero));
         var customerKeys = new CountingCustomerKeyService();
 
@@ -295,15 +304,76 @@ public sealed class KeyHierarchyTests
 
         var customer = new CustomerId(Guid.NewGuid());
 
-        using (DataKeyLease _ = await cache.AcquireAsync(customer, 3000, TestContext.Current.CancellationToken).ConfigureAwait(true))
+        using (DataKeyLease lease = await cache.AcquireAsync(customer, TestContext.Current.CancellationToken).ConfigureAwait(true))
         {
+            lease.RecordBytes(3000);
             customerKeys.Calls.ShouldBe(1);
         }
 
-        using (DataKeyLease _ = await cache.AcquireAsync(customer, 3000, TestContext.Current.CancellationToken).ConfigureAwait(true))
+        // Recorded spend (3000) is under the budget, so the key is still served...
+        using (DataKeyLease lease = await cache.AcquireAsync(customer, TestContext.Current.CancellationToken).ConfigureAwait(true))
         {
-            customerKeys.Calls.ShouldBe(2, "the byte budget is spent, so a new key is minted");
+            lease.RecordBytes(3000);
+            customerKeys.Calls.ShouldBe(1, "3000 recorded bytes < 4096: the cached key is still within budget");
         }
+
+        // ...and 6000 recorded bytes is past it, so the NEXT acquire rotates. Settling after the
+        // fact means one object may overshoot the budget by its own size - deliberate, documented
+        // on RecordBytes - and rotation happens on the first acquire that sees the spend.
+        using (DataKeyLease lease = await cache.AcquireAsync(customer, TestContext.Current.CancellationToken).ConfigureAwait(true))
+        {
+            lease.RecordBytes(1);
+            customerKeys.Calls.ShouldBe(2, "recorded spend crossed the byte budget, so a new key is minted");
+        }
+    }
+
+    [Fact]
+    public async Task DataKeyLease_DisposedWithoutRecordBytes_Fails()
+    {
+        // FORGETTING MUST BE LOUD (audit HIGH 2's real lesson: an API that lets a caller silently
+        // skip the budget is how the budget went blind). Disposal without settlement logs an ERROR.
+        // It logs rather than throws, deliberately: a throw inside `using` disposal would fire on
+        // every failure path and REPLACE the real exception - the exact error-masking Part B of
+        // this remediation removes elsewhere.
+        var clock = new TestClock(new DateTimeOffset(2026, 8, 27, 12, 0, 0, TimeSpan.Zero));
+        var logger = new RecordingLogger<DataKeyCache>();
+
+        using var cache = new DataKeyCache(
+            new CountingCustomerKeyService(),
+            Options.Create(new DataKeyCacheOptions()),
+            clock,
+            logger);
+
+        var customer = new CustomerId(Guid.NewGuid());
+
+        using (DataKeyLease _ = await cache.AcquireAsync(customer, TestContext.Current.CancellationToken).ConfigureAwait(true))
+        {
+            // Deliberately no RecordBytes.
+        }
+
+        logger.Errors.ShouldBe(1, "an unsettled lease must be impossible to dispose quietly");
+
+        // And a settled one is quiet.
+        using (DataKeyLease lease = await cache.AcquireAsync(customer, TestContext.Current.CancellationToken).ConfigureAwait(true))
+        {
+            lease.RecordBytes(10);
+        }
+
+        logger.Errors.ShouldBe(1, "a settled lease logs nothing");
+    }
+
+    [Fact]
+    public async Task DataKeyLease_RecordBytesTwice_Throws()
+    {
+        var clock = new TestClock(new DateTimeOffset(2026, 8, 27, 12, 0, 0, TimeSpan.Zero));
+        using var cache = new DataKeyCache(
+            new CountingCustomerKeyService(), Options.Create(new DataKeyCacheOptions()), clock);
+
+        using DataKeyLease lease = await cache
+            .AcquireAsync(new CustomerId(Guid.NewGuid()), TestContext.Current.CancellationToken).ConfigureAwait(true);
+
+        lease.RecordBytes(5);
+        _ = Should.Throw<InvalidOperationException>(() => lease.RecordBytes(5));
     }
 
     [Fact]
@@ -321,12 +391,14 @@ public sealed class KeyHierarchyTests
 
         var customer = new CustomerId(Guid.NewGuid());
 
-        using DataKeyLease first = await cache.AcquireAsync(customer, 1, TestContext.Current.CancellationToken).ConfigureAwait(true);
+        using DataKeyLease first = await cache.AcquireAsync(customer, TestContext.Current.CancellationToken).ConfigureAwait(true);
         byte[] material = first.Key.Span.ToArray();
 
-        using DataKeyLease second = await cache.AcquireAsync(customer, 1, TestContext.Current.CancellationToken).ConfigureAwait(true);
+        using DataKeyLease second = await cache.AcquireAsync(customer, TestContext.Current.CancellationToken).ConfigureAwait(true);
+        second.RecordBytes(1);
 
         first.Key.Span.ToArray().ShouldBe(material, "the first lease must still hold usable key material");
+        first.RecordBytes(1);
     }
 
     [Fact]
@@ -338,11 +410,13 @@ public sealed class KeyHierarchyTests
         using var cache = new DataKeyCache(customerKeys, Options.Create(new DataKeyCacheOptions()), clock);
 
         using DataKeyLease a = await cache
-            .AcquireAsync(new CustomerId(Guid.NewGuid()), 1, TestContext.Current.CancellationToken).ConfigureAwait(true);
+            .AcquireAsync(new CustomerId(Guid.NewGuid()), TestContext.Current.CancellationToken).ConfigureAwait(true);
         using DataKeyLease b = await cache
-            .AcquireAsync(new CustomerId(Guid.NewGuid()), 1, TestContext.Current.CancellationToken).ConfigureAwait(true);
+            .AcquireAsync(new CustomerId(Guid.NewGuid()), TestContext.Current.CancellationToken).ConfigureAwait(true);
 
         a.Key.Span.ToArray().ShouldNotBe(b.Key.Span.ToArray());
+        a.RecordBytes(1);
+        b.RecordBytes(1);
     }
 
     [Fact]
@@ -429,5 +503,29 @@ public sealed class KeyHierarchyTests
 
         public Task<bool> TryInsertAsync(CustomerKeyRecord record, CancellationToken ct) =>
             Task.FromResult(true);
+    }
+
+    /// <summary>Counts error-level log events - the unsettled-lease tripwire's assertion surface.</summary>
+    private sealed class RecordingLogger<T> : Microsoft.Extensions.Logging.ILogger<T>
+    {
+        public int Errors { get; private set; }
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            Microsoft.Extensions.Logging.LogLevel logLevel,
+            Microsoft.Extensions.Logging.EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel == Microsoft.Extensions.Logging.LogLevel.Error)
+            {
+                Errors++;
+            }
+        }
     }
 }

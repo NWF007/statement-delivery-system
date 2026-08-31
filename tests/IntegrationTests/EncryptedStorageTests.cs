@@ -199,6 +199,148 @@ public sealed class EncryptedStorageTests
     // ─── Round trip through the real adapter ─────────────────────────────────────────────────────
 
     [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]
+    public async Task Write_ZeroLengthContent_RoundTrips()
+    {
+        // ADR-0032: the size shape nobody writes a test for. A zero-transaction statement still
+        // renders a valid one-page PDF, but the STORE's contract for empty content - header-only
+        // framing, a zero Content-Length spool, an empty-body PUT - is its own branch.
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        (Guid customer, Guid account, Guid statement, StatementPeriod period) =
+            await SeedCustomerAsync(cancellationToken).ConfigureAwait(true);
+
+        (S3StatementContentStore store, Amazon.S3.IAmazonS3 client) = _minio.CreateStore(_postgres);
+        using (client)
+        {
+            StatementDelivery.ServiceDefaults.Storage.StoredObject stored = await store.WriteAsync(
+                Stream.Null,
+                new StatementDelivery.Crypto.Framing.CryptoContext(statement, customer, 1),
+                new StatementDelivery.Domain.Identifiers.AccountId(account),
+                period,
+                StatementDelivery.Crypto.Keys.CohortAssignment.KekIdFor(
+                    StatementDelivery.Crypto.Keys.CohortAssignment.ForCustomer(
+                        new StatementDelivery.Domain.Identifiers.CustomerId(customer))),
+                cancellationToken).ConfigureAwait(true);
+
+            stored.PlaintextLength.ShouldBe(0);
+            stored.CiphertextLength.ShouldBeGreaterThan(0, "even empty content carries the framed header");
+
+            StatementDelivery.ServiceDefaults.Storage.StatementContent? content = await store.OpenReadAsync(
+                new StatementDelivery.Domain.Statements.StorageLocation(
+                    stored.Key, stored.Tier, stored.PlaintextLength, stored.Envelope),
+                cancellationToken).ConfigureAwait(true);
+
+            content.ShouldNotBeNull();
+            await using (content.ConfigureAwait(false))
+            {
+                using var sink = new MemoryStream();
+                await content.Stream.CopyToAsync(sink, cancellationToken).ConfigureAwait(true);
+                sink.Length.ShouldBe(0);
+            }
+        }
+    }
+
+    [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]
+    public async Task Write_FromNonSeekableStream_RoundTrips()
+    {
+        // THE SEAM THE PROMPT 5 AUDIT'S CRITICAL LIVED IN, against a REAL MinIO. The render
+        // pipeline hands the writer a pipe - non-seekable, unmeasurable - and every prior
+        // storage test wrote from a seekable MemoryStream, so the branch production takes was
+        // the one branch never executed. The unit-level tripwire (ContentWriterSeamTests) runs
+        // on every build; this is the end-to-end truth with a real S3 implementation enforcing
+        // the real Content-Length rules.
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+
+        (Guid customer, Guid account, Guid statement, StatementPeriod period) =
+            await SeedCustomerAsync(cancellationToken).ConfigureAwait(true);
+
+        byte[] plaintext = new byte[300 * 1024];
+        System.Security.Cryptography.RandomNumberGenerator.Fill(plaintext.AsSpan(0, 4096));
+
+        (S3StatementContentStore store, Amazon.S3.IAmazonS3 client) = _minio.CreateStore(_postgres);
+        using (client)
+        {
+            StatementDelivery.ServiceDefaults.Storage.StoredObject stored;
+
+            using (var source = new NonSeekableSource(new MemoryStream(plaintext, writable: false)))
+            {
+                stored = await store.WriteAsync(
+                    source,
+                    new StatementDelivery.Crypto.Framing.CryptoContext(statement, customer, 1),
+                    new StatementDelivery.Domain.Identifiers.AccountId(account),
+                    period,
+                    StatementDelivery.Crypto.Keys.CohortAssignment.KekIdFor(
+                        StatementDelivery.Crypto.Keys.CohortAssignment.ForCustomer(
+                            new StatementDelivery.Domain.Identifiers.CustomerId(customer))),
+                    cancellationToken).ConfigureAwait(true);
+            }
+
+            stored.PlaintextLength.ShouldBe(plaintext.Length);
+
+            // And read it back through the REAL decrypting store: the round trip proves the
+            // spooled ciphertext is byte-for-byte what the framed reader expects.
+            StatementDelivery.ServiceDefaults.Storage.StatementContent? content = await store.OpenReadAsync(
+                new StatementDelivery.Domain.Statements.StorageLocation(
+                    stored.Key, stored.Tier, stored.PlaintextLength, stored.Envelope),
+                cancellationToken).ConfigureAwait(true);
+
+            content.ShouldNotBeNull();
+            await using (content.ConfigureAwait(false))
+            {
+                using var sink = new MemoryStream();
+                await content.Stream.CopyToAsync(sink, cancellationToken).ConfigureAwait(true);
+                sink.ToArray().ShouldBe(plaintext);
+            }
+        }
+    }
+
+    /// <summary>A non-seekable wrapper - the input shape the render pipe actually produces.</summary>
+    private sealed class NonSeekableSource : Stream
+    {
+        private readonly Stream _inner;
+
+        public NonSeekableSource(Stream inner) => _inner = inner;
+
+        public override bool CanRead => true;
+
+        public override bool CanSeek => false;
+
+        public override bool CanWrite => false;
+
+        public override long Length => throw new NotSupportedException();
+
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override void Flush()
+        {
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => _inner.Read(buffer, offset, count);
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+            _inner.ReadAsync(buffer, cancellationToken);
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _inner.Dispose();
+            }
+
+            base.Dispose(disposing);
+        }
+    }
+
+    [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]
     public async Task WriteThenRead_RoundTripsThroughObjectStorage()
     {
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;

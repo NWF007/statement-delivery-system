@@ -73,12 +73,13 @@ public sealed partial class MigrationScriptTests
                      "V014__customer_key_cohort_index",
                      "V015__statement_content_digest_required",
                      "V016__validate_deferred_constraints",
+                     "V017__statement_runs",
                  ])
         {
             names.ShouldContain(name => name.Contains(expected, StringComparison.Ordinal));
         }
 
-        names.Count.ShouldBe(16);
+        names.Count.ShouldBe(17);
     }
 
     [Fact]

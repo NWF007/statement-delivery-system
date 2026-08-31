@@ -1,36 +1,127 @@
 using System.ComponentModel.DataAnnotations;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using StatementDelivery.Domain.Identifiers;
 
 namespace StatementDelivery.Crypto.Keys;
 
 /// <summary>A borrowed data key and the wrapped form that must be stored alongside the object.</summary>
-/// <param name="Key">The key to encrypt with. Owned by the lease; disposed with it.</param>
-/// <param name="WrappedDek">The wrapped key, for the statement row.</param>
-/// <param name="Algorithm">The wrapping algorithm, recorded so a future change is decodable.</param>
 /// <remarks>
+/// <para>
 /// The lease holds its OWN COPY of the key material rather than a reference to the cached one. Two
 /// dozen bytes copied per object is nothing, and it removes a genuine lifetime hazard: the cache may
 /// evict and wipe an entry at any moment, and a write already in flight would otherwise find its key
 /// zeroed mid-stream. Ownership is unambiguous - the lease wipes its copy, the cache wipes its own.
+/// </para>
+/// <para>
+/// ⚠ <see cref="RecordBytes"/> IS PART OF THE CONTRACT, NOT AN OPTION. The byte budget used to be
+/// charged from a caller-supplied ESTIMATE at acquire time - and the streaming write path, which
+/// cannot know its length up front, passed zero. The budget silently stopped counting, and a
+/// two-bound safety margin on key reuse quietly became one (the Prompt 5 audit's HIGH 2). Now the
+/// caller settles the REAL plaintext byte count after encrypting; an acquire-time estimate no
+/// longer exists to be zero. A lease disposed without settling logs an ERROR - see
+/// <see cref="Dispose"/> for why it logs rather than throws.
+/// </para>
 /// </remarks>
-public sealed record DataKeyLease(DataKey Key, byte[] WrappedDek, string Algorithm) : IDisposable
+public sealed class DataKeyLease : IDisposable
 {
-    /// <summary>Wipes this lease's copy of the key.</summary>
-    public void Dispose() => Key.Dispose();
+    private readonly Action<long>? _settle;
+    private readonly ILogger? _logger;
+    private bool _recorded;
+
+    internal DataKeyLease(DataKey key, byte[] wrappedDek, string algorithm, Action<long>? settle, ILogger? logger)
+    {
+        Key = key;
+        WrappedDek = wrappedDek;
+        Algorithm = algorithm;
+        _settle = settle;
+        _logger = logger;
+    }
+
+    /// <summary>Gets the key to encrypt with. Owned by the lease; disposed with it.</summary>
+    public DataKey Key { get; }
+
+    /// <summary>Gets the wrapped key, for the statement row.</summary>
+    public byte[] WrappedDek { get; }
+
+    /// <summary>Gets the wrapping algorithm, recorded so a future change is decodable.</summary>
+    public string Algorithm { get; }
+
+    /// <summary>
+    /// Settles the byte budget with the ACTUAL plaintext byte count this key protected.
+    /// </summary>
+    /// <remarks>
+    /// PLAINTEXT bytes, not ciphertext: the budget bounds how much material one key protects, and
+    /// framing overhead is not material. Call exactly once, immediately after encryption succeeds -
+    /// the bytes were protected the moment they were encrypted, whether or not the upload that
+    /// follows ever lands. One deliberate consequence of settling AFTER the fact: a single object
+    /// may overshoot the budget by its own size before the next acquire sees the spend. The budget
+    /// is a rotation trigger, not a hard wall, and a one-object overshoot is the price of never
+    /// again trusting an estimate that could be zero.
+    /// </remarks>
+    /// <param name="plaintextBytes">Bytes of plaintext encrypted under this lease's key.</param>
+    public void RecordBytes(long plaintextBytes)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(plaintextBytes);
+
+        if (_recorded)
+        {
+            throw new InvalidOperationException("RecordBytes was already called on this lease.");
+        }
+
+        _recorded = true;
+        _settle?.Invoke(plaintextBytes);
+    }
+
+    /// <summary>Wipes this lease's copy of the key, and shouts if the budget was never settled.</summary>
+    /// <remarks>
+    /// LOGS AN ERROR RATHER THAN THROWING, deliberately. A throw here would fire inside `using`
+    /// disposal on every failure path - encryption faulted, upload faulted - and REPLACE the real
+    /// exception with a bookkeeping one, which is exactly the error-masking this remediation fixes
+    /// elsewhere. A mid-encryption fault legitimately cannot settle (the count is unknowable), so
+    /// unsettled-on-failure is expected; unsettled-on-SUCCESS is the forgotten-call bug, and the
+    /// error log plus the seam tests are what make it loud.
+    /// </remarks>
+    public void Dispose()
+    {
+        if (!_recorded)
+        {
+            _logger?.UnsettledLeaseDisposed();
+        }
+
+        Key.Dispose();
+    }
+}
+
+/// <summary>High-performance log messages for the data-key subsystem.</summary>
+internal static partial class DataKeyLog
+{
+    [LoggerMessage(
+        EventId = 4020,
+        Level = LogLevel.Error,
+        Message = "A DataKeyLease was disposed without RecordBytes. If the write SUCCEEDED, the byte "
+                + "budget just under-counted and key rotation is running late - find the caller and "
+                + "add the settle. (A lease abandoned by a mid-encryption failure also lands here; "
+                + "correlate with the write error.)")]
+    public static partial void UnsettledLeaseDisposed(this ILogger logger);
 }
 
 /// <summary>Supplies data keys for encrypting and decrypting statement objects.</summary>
 public interface IDataKeyBroker
 {
     /// <summary>Takes a data key for writing one object.</summary>
+    /// <remarks>
+    /// NO BYTE ESTIMATE, ON PURPOSE. The previous signature took one, and the streaming caller -
+    /// which cannot measure a pipe - passed zero, silently disabling the byte budget. The budget is
+    /// now settled with the REAL count via <see cref="DataKeyLease.RecordBytes"/> after encryption;
+    /// an estimate that could lie no longer exists.
+    /// </remarks>
     /// <param name="customer">Whose CEK wraps it.</param>
-    /// <param name="expectedBytes">Roughly how much will be encrypted, for the byte budget.</param>
     /// <param name="ct">Cancellation token.</param>
-    /// <returns>A lease. Dispose it when the write completes.</returns>
-    Task<DataKeyLease> AcquireAsync(CustomerId customer, long expectedBytes, CancellationToken ct);
+    /// <returns>A lease. Settle it with RecordBytes, then dispose it.</returns>
+    Task<DataKeyLease> AcquireAsync(CustomerId customer, CancellationToken ct);
 
     /// <summary>Unwraps the data key recorded against an object, for reading it back.</summary>
     /// <param name="customer">Whose CEK wraps it.</param>
@@ -98,6 +189,7 @@ public sealed class DataKeyCache : IDataKeyBroker, IDisposable
     private readonly ICustomerKeyService _customerKeys;
     private readonly DataKeyCacheOptions _options;
     private readonly TimeProvider _time;
+    private readonly ILogger<DataKeyCache>? _logger;
     private readonly Lock _gate = new();
     private readonly Dictionary<Guid, Entry> _entries = [];
     private bool _disposed;
@@ -106,25 +198,27 @@ public sealed class DataKeyCache : IDataKeyBroker, IDisposable
     /// <param name="customerKeys">The customer key service.</param>
     /// <param name="options">Cache bounds.</param>
     /// <param name="time">Time provider.</param>
+    /// <param name="logger">Logger for the unsettled-lease error. Optional so tests stay light.</param>
     public DataKeyCache(
         ICustomerKeyService customerKeys,
         IOptions<DataKeyCacheOptions> options,
-        TimeProvider time)
+        TimeProvider time,
+        ILogger<DataKeyCache>? logger = null)
     {
         ArgumentNullException.ThrowIfNull(options);
 
         _customerKeys = customerKeys;
         _options = options.Value;
         _time = time;
+        _logger = logger;
     }
 
     /// <inheritdoc />
-    public async Task<DataKeyLease> AcquireAsync(CustomerId customer, long expectedBytes, CancellationToken ct)
+    public async Task<DataKeyLease> AcquireAsync(CustomerId customer, CancellationToken ct)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        ArgumentOutOfRangeException.ThrowIfNegative(expectedBytes);
 
-        if (TryTake(customer.Value, expectedBytes, out DataKeyLease? cached))
+        if (TryTake(customer.Value, out DataKeyLease? cached))
         {
             return cached;
         }
@@ -151,15 +245,12 @@ public sealed class DataKeyCache : IDataKeyBroker, IDisposable
             throw;
         }
 
-        return TryTake(customer.Value, expectedBytes, out DataKeyLease? fresh)
+        // A freshly installed entry has zero spend, so this take can only fail if another thread
+        // raced it through the whole budget between Install and here - in which case looping once
+        // more mints again, which is correct.
+        return TryTake(customer.Value, out DataKeyLease? fresh)
             ? fresh
-
-            // Reachable only if the budget is smaller than a single object, which is a configuration
-            // error rather than a runtime condition. Failing loudly beats silently spending a KMS
-            // call per object and wondering later why the render throttles.
-            : throw new InvalidOperationException(string.Create(
-                CultureInfo.InvariantCulture,
-                $"A freshly minted data key could not cover {expectedBytes} bytes; Crypto:DekCache:MaxBytesPerKey is {_options.MaxBytesPerKey}."));
+            : await AcquireAsync(customer, ct).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -201,7 +292,7 @@ public sealed class DataKeyCache : IDataKeyBroker, IDisposable
         CultureInfo.InvariantCulture,
         $"statement-dek/{customer.Value:D}");
 
-    private bool TryTake(Guid customer, long expectedBytes, [NotNullWhen(true)] out DataKeyLease? lease)
+    private bool TryTake(Guid customer, [NotNullWhen(true)] out DataKeyLease? lease)
     {
         lock (_gate)
         {
@@ -211,14 +302,20 @@ public sealed class DataKeyCache : IDataKeyBroker, IDisposable
                 return false;
             }
 
+            // The byte bound now reads SETTLED spend - real bytes recorded by completed
+            // encryptions - rather than a sum of estimates. A key is refused once its recorded
+            // spend has reached the budget; in-flight leases settle into the entry as they finish,
+            // so the worst overshoot is the objects currently in flight, not an unbounded drift.
             bool expired = _time.GetUtcNow() - entry.CreatedAt >= _options.MaxAge;
             bool objectBudgetSpent = entry.ObjectsUsed + 1 > _options.MaxObjectsPerKey;
-            bool byteBudgetSpent = entry.BytesUsed + expectedBytes > _options.MaxBytesPerKey;
+            bool byteBudgetSpent = entry.BytesUsed >= _options.MaxBytesPerKey;
 
             if (expired || objectBudgetSpent || byteBudgetSpent)
             {
                 // Evicted AND wiped. Dropping the reference alone would leave the key sitting in the
-                // heap until a collection that may never come.
+                // heap until a collection that may never come. In-flight leases hold their own key
+                // COPY, so a settle arriving after this eviction lands nowhere - harmless, because a
+                // retired key's budget no longer gates anything.
                 entry.Key.Dispose();
                 _ = _entries.Remove(customer);
 
@@ -227,10 +324,29 @@ public sealed class DataKeyCache : IDataKeyBroker, IDisposable
             }
 
             entry.ObjectsUsed++;
-            entry.BytesUsed += expectedBytes;
 
-            lease = new DataKeyLease(DataKey.CopyFrom(entry.Key.Span), [.. entry.WrappedDek], KeyWrap.AlgorithmName);
+            Entry settleTarget = entry;
+            lease = new DataKeyLease(
+                DataKey.CopyFrom(entry.Key.Span),
+                [.. entry.WrappedDek],
+                KeyWrap.AlgorithmName,
+                bytes => Settle(customer, settleTarget, bytes),
+                _logger);
             return true;
+        }
+    }
+
+    /// <summary>Adds a completed encryption's real byte count to its entry's spend.</summary>
+    private void Settle(Guid customer, Entry target, long plaintextBytes)
+    {
+        lock (_gate)
+        {
+            // Only if the SAME entry is still installed: a settle for a rotated-away key must not
+            // charge its successor.
+            if (_entries.TryGetValue(customer, out Entry? current) && ReferenceEquals(current, target))
+            {
+                current.BytesUsed += plaintextBytes;
+            }
         }
     }
 

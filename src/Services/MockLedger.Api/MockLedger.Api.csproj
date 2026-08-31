@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!--
+    A mock of the core-banking ledger, standing behind a REAL network boundary.
+
+    DELIBERATELY STANDALONE: no reference to ServiceDefaults, Persistence, or anything else in
+    this repository. It exists to exercise the generation fleet's resilience policies - timeout,
+    retry, circuit breaker, rate limiting - and a stub wired into the same DI container as its
+    caller cannot time out, cannot drop a connection, and cannot rate-limit anything. It also
+    must never accidentally share code with the worker under test, or the test stops being a
+    boundary test.
+  -->
+
+  <PropertyGroup>
+    <RootNamespace>MockLedger.Api</RootNamespace>
+  </PropertyGroup>
+
+</Project>

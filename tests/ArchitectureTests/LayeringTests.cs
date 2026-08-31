@@ -66,12 +66,14 @@ public sealed class LayeringTests
     [Fact]
     public void Services_ShouldNotReferenceEachOther()
     {
-        // Four deployables that can be released independently. The moment one references another
+        // Five deployables that can be released independently (Prompt 5 added MockLedger.Api,
+        // which exists precisely BECAUSE it shares no code with its caller - a resilience policy
+        // tested against an in-process stub is not tested). The moment one references another
         // they share a build, a version and a blast radius, and the microservice split has bought
         // nothing but the distributed-systems tax. Services talk over HTTP and the outbox, never
         // by linking.
         string[] serviceNames = [.. SolutionGraph.Services.Select(service => service.Name)];
-        serviceNames.Length.ShouldBe(4, "there are exactly four deployable services");
+        serviceNames.Length.ShouldBe(5, "there are exactly five deployable services");
 
         foreach (ProjectNode service in SolutionGraph.Services)
         {

@@ -1,6 +1,7 @@
 using Delivery.Api.Auditing;
 using Delivery.Api.Configuration;
 using Delivery.Api.Downloads;
+using Delivery.Api.Runs;
 using Delivery.Api.Statements;
 using Scalar.AspNetCore;
 using StatementDelivery.Persistence;
@@ -32,6 +33,7 @@ app.UseAuthorization();
 app.MapStatementEndpoints();
 app.MapDownloadLinkEndpoints();
 app.MapAuditVerifyEndpoint();
+app.MapStatementRunEndpoints();
 
 if (app.Environment.IsDevelopment())
 {

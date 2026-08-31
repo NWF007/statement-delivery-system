@@ -5,7 +5,7 @@ ADRs: an ADR records a decision, this records a gap.
 
 ## Test coverage that has never executed
 
-**As of 2026-08-30, on commit `41048ce` plus the Prompts 1–4 audit remediation.**
+**As of 2026-08-30, covering commit `41048ce`, the Prompts 1–4 audit remediation, and Prompt 5.**
 
 The suite is 457 tests, 0 failed. **109 of them have never run on the development host**, because they
 need a container runtime that host cannot provide:
@@ -62,6 +62,20 @@ Two architecture tests added at the same time — `DownloadGateway_MustNotCall_T
 and `TheTransactionalOverload_IsTheOneTheGatewayUses` — **do** run here, and were confirmed red before
 the fix and green after.
 
+### Prompt 5's tests, and their status here
+
+The batch subsystem's proof splits the same way. **Runs on this host, every build:** byte-determinism
+(in-process AND across real child-process restarts), 800-line pagination, zero-transaction rendering,
+forward-only streaming, the money IL rule, the mock ledger's determinism/faults (hosted in-process),
+and the ledger client's retry/no-retry/poison behaviour through the REAL resilience pipeline.
+**Docker-gated, never executed here:** the claim queue under 50 concurrent workers, attempt semantics,
+the reaper, planning idempotency/resumability/streaming, poison quarantine, circuit-open
+pause-and-resume, worker-crash recovery, generation-vs-delivery pool isolation, and
+`FullRun_1000Accounts_AllStatementsAvailableAndDownloadable` — the complete loop. The single most
+important test in the subsystem (`ConcurrentWorkers_NeverClaimSameItem` — a claim bug means duplicate
+statements under a seven-year Compliance lock) is in the unexecuted set. CI is where all of these run
+first.
+
 ### The obligation
 
 **Before the Prompt 7 fresh-clone gate, the full suite must execute somewhere** — a working Docker
@@ -72,6 +86,31 @@ defending, and the two highest-value tests in the repository are both in the une
 bug on the redemption hot path that would have presented as a ciphertext-integrity alert, and a real
 concurrent-redemption test against a lagging replica would have caught it. Nothing static did.
 
+### Escalation, 2026-08-30: Docker is now the critical path
+
+Last round this was a note. This round it demonstrably cost the project: the Prompt 5 audit found
+a CRITICAL — every batch-pipeline upload failed with `Could not determine content length`, so a
+full production run would have quarantined all 30 million items — and it was found only because
+the auditor wrote a ten-line probe by hand. `FullRun_1000Accounts` would have caught it on its
+first CI run with 1,000 quarantined items. Six Prompt 5 acceptance checks (56, 57, 59, 62, 69,
+70) that read ENV-BLOCKED **would have failed at that moment**, not passed: "unexecuted" and
+"green" had silently diverged, which is exactly the gap this file exists to keep visible.
+
+The current numbers, as of the RED remediation:
+
+- **This host:** Windows Server 2025 nested-virtualisation guest, no WSL, no Hyper-V
+  `vmcompute` — the Docker Linux engine cannot start (see the table at the top of this file).
+- **Never executed here:** 131 of 505 tests (every `[Fact(SkipUnless = ...)]` behind the Docker
+  or KMS gate), including `ConcurrentWorkers_NeverClaimSameItem`, the reaper/claim/poison
+  suite, all schema tests, the MinIO storage round-trips, the new port-shape sweep's gated
+  rows, `Completion_IsScopedToTheClaimant`, and `FullRun_1000Accounts` — the complete loop.
+- **The plan to close it:** before Prompt 6 begins, run the full suite on a Docker-capable host
+  — the GitHub Actions CI job (has a daemon), a cloud dev box, or any Linux machine with
+  `docker compose`. `FullRun_1000Accounts` runs first, watched, per the remediation brief.
+  **This is now the highest-priority non-code task in the project**, ahead of any Prompt 6
+  feature work, and Prompt 6 does not start until `FullRun_1000Accounts` has executed
+  somewhere and passed.
+
 ## Deferred by design
 
 These are scheduled, not missing. Listed so the two categories do not get confused.
@@ -79,8 +118,7 @@ These are scheduled, not missing. Listed so the two categories do not get confus
 | Item | Scheduled for |
 |---|---|
 | `IChainAnchor` is a no-op — chain heads live in the same database as the events they attest | Deferred; ADR-0010 names the February 2027 external audit as the deadline |
-| PDF generation and `statement_run` execution | Prompt 5 |
-| Outbox rows accumulate with no relay | Prompt 5 |
+| Outbox transport: the relay publishes to a logging sink behind `TODO(transport)` — the pattern (atomic write, at-least-once drain, lag metric) is real; the send swaps in when a consumer exists | When any consumer arrives; ADR-0026 |
 | `legal_hold` and `customer_key` exist but are unused by any sweep | Prompt 6 |
 | `POST /v1/statements/{id}/restore`, referenced in 409 payloads | Prompt 6 |
 | `CustomerKeyService.DestroyCekAsync` throws `NotImplementedException` — crypto-erasure needs retention checks, legal-hold enforcement and an audit record first | Prompt 6 |
@@ -96,3 +134,18 @@ TTL by a host whose clock runs ahead would fall outside `now() + INTERVAL '1 hou
 while still perfectly valid. The reasoning is written out in full above `ConsumeSql`. Fixing it
 properly means either sourcing both timestamps from the same clock or adopting an explicit,
 monitored skew budget.
+
+**A failed finalize can orphan an encrypted object under a seven-year Compliance lock.** The render
+pipeline uploads before the metadata transaction commits (uploading after would invert into the worse
+failure: a row promising bytes that do not exist). The deterministic object key means every retry
+overwrites the same key — orphans do not multiply per attempt — but an item abandoned after upload
+leaves exactly one. Quantified: at a 0.01% commit-failure rate on a 30M/month run, ~3,000
+orphans/month at ~200 KB ≈ **600 MB/month of unreclaimable storage** until the lock expires.
+Two-phase locking (retention applied only after commit) is not available: the bucket's default
+Object Lock retention applies at PUT. The orphan sweep is `TODO(prompt6)` in `RenderPipeline` — the
+other half of reconciliation CHECK 1.
+
+**"Run PAUSED" reflects one replica's circuit breaker.** Enforcement is distributed (every replica's
+claim loop stops on its own breaker), but the status flip is performed by the lease-holding
+orchestrator observing its own breaker. A partition that isolates only the orchestrator replica could
+mislabel the run. Accepted, with the reasoning and revisit trigger in ADR-0030.

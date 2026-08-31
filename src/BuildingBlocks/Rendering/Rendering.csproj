@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The QuestPDF adapter behind the IStatementRenderer port.
+
+    A SEPARATE PROJECT, not a folder in ServiceDefaults, for one load-bearing reason: QuestPDF is
+    dual-licensed with a revenue threshold (docs/LICENSING.md), and the day procurement objects,
+    the migration to PDFsharp must be "replace this project's one implementation class" - not
+    "untangle a PDF dependency from the shared plumbing assembly every service references".
+    Only Generation.Worker references this project; the delivery path never renders.
+  -->
+
+  <PropertyGroup>
+    <RootNamespace>StatementDelivery.Rendering</RootNamespace>
+    <AssemblyName>StatementDelivery.Rendering</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Domain\Domain.csproj" />
+    <PackageReference Include="QuestPDF" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Options" />
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" />
+    <PackageReference Include="Microsoft.Extensions.Options.DataAnnotations" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
+  </ItemGroup>
+
+</Project>

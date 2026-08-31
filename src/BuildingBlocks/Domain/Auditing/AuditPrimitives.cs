@@ -97,6 +97,12 @@ public static class AuditAction
     /// <summary>The full statement was delivered.</summary>
     public const string DownloadCompleted = "DOWNLOAD_COMPLETED";
 
+    /// <summary>A staff user requested a batch generation run for a period.</summary>
+    public const string StatementRunRequested = "STATEMENT_RUN_REQUESTED";
+
+    /// <summary>A staff user reset quarantined run items for retry.</summary>
+    public const string StatementRunRetried = "STATEMENT_RUN_RETRIED";
+
     /// <summary>The transfer ended before all bytes were sent - usually a client disconnect.</summary>
     public const string DownloadIncomplete = "DOWNLOAD_INCOMPLETE";
 

@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Determinism probe and local render bench.
+
+    `renderhash hash` exists for one test: Render_AcrossProcessRestart_ProducesIdenticalBytes
+    launches this executable TWICE and compares the hashes - a genuine process restart, which is
+    what the in-process double-render cannot prove (statics, font caches and JIT state all
+    survive within one process and could mask a drift).
+
+    `renderhash bench N` renders N statements through the real render -> encrypt pipeline into a
+    null sink, and prints stage timings and peak working set. It is how the throughput and memory
+    numbers in the Prompt 5 deliverable were measured on a host that cannot run containers.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>RenderHash</RootNamespace>
+    <AssemblyName>renderhash</AssemblyName>
+    <!-- A tool, not a service: the analyzers' documentation rules are for the long-lived code. -->
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\BuildingBlocks\Domain\Domain.csproj" />
+    <ProjectReference Include="..\..\src\BuildingBlocks\Rendering\Rendering.csproj" />
+    <ProjectReference Include="..\..\src\BuildingBlocks\Crypto\Crypto.csproj" />
+  </ItemGroup>
+
+</Project>

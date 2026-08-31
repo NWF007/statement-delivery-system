@@ -24,6 +24,8 @@
     <ProjectReference Include="..\..\src\Migrations\Db.Migrator\Db.Migrator.csproj" />
     <ProjectReference Include="..\..\src\Services\Delivery.Api\Delivery.Api.csproj" />
     <ProjectReference Include="..\..\src\Services\Download.Gateway\Download.Gateway.csproj" />
+    <ProjectReference Include="..\..\src\Services\Generation.Worker\Generation.Worker.csproj" />
+    <ProjectReference Include="..\..\src\Services\MockLedger.Api\MockLedger.Api.csproj" />
   </ItemGroup>
 
 </Project>
