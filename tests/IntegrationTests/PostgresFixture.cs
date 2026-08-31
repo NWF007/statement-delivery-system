@@ -113,6 +113,13 @@ public sealed class PostgresFixture : IAsyncLifetime
             // Matches the compose stack. Slow queries have to be visible somewhere, and finding out
             // in production that nothing was logging them is the wrong time.
             .WithCommand("-c", "log_min_duration_statement=200")
+
+            // The container has no PgBouncer and InitializeAsync lifts the per-role caps, so the
+            // global ceiling is the only limit left - and the default 100 is not enough for the
+            // claim-contention tests' fifty direct connections running beside other parallel
+            // collections. Production never sees this shape; the pooler holds the fleet to a few
+            // dozen backends (ADR-0008).
+            .WithCommand("-c", "max_connections=300")
             .Build();
 
         await _container.StartAsync().ConfigureAwait(false);
