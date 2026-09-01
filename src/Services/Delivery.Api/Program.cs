@@ -37,9 +37,16 @@ WebApplication app = builder.Build();
 // First, so the exception handler it installs sits in front of everything below it.
 app.MapDefaultEndpoints();
 
-app.UseRateLimiter();
+// ORDER IS LOAD-BEARING. UseRateLimiter MUST come after UseAuthentication: the PerCallerPolicy
+// partition key reads httpContext.User.FindFirst("sub"), and before authentication runs that
+// principal is empty - so every request fell through to the RemoteIpAddress branch and the whole
+// fleet shared ONE 120/minute partition. Measured on 2026-09-01: 150 requests from 150 DISTINCT
+// customers returned exactly 120x201 then 30x429. That is precisely the "one corporate NAT
+// punishes every customer behind it" failure the partition key was written to avoid.
+// Unauthenticated requests still partition by IP, via the same fallback.
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseRateLimiter();
 
 app.MapStatementEndpoints();
 app.MapDownloadLinkEndpoints();

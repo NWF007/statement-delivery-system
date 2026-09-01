@@ -56,3 +56,15 @@ export function monthRange(periodStart) {
   const to = new Date(d.getFullYear(), d.getMonth() + 1, 1).toISOString().slice(0, 10);
   return { from, to };
 }
+
+// POSTs in this suite send a JSON body. k6 defaults an unlabelled string body to text/plain,
+// which the API answers 415 for — so every issue request failed before this existed. Separate
+// from authHeaders because the GET paths must NOT advertise a request body content type.
+export function jsonAuthHeaders(customerId, staff = false) {
+  return {
+    headers: {
+      Authorization: `Bearer ${tokenFor(customerId, staff)}`,
+      'Content-Type': 'application/json',
+    },
+  };
+}
