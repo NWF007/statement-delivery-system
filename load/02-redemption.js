@@ -8,7 +8,7 @@
 import http from 'k6/http';
 import { check } from 'k6';
 import { Trend } from 'k6/metrics';
-import { API, GATEWAY, rampOptions, pick, authHeaders } from './lib.js';
+import { API, GATEWAY, rampOptions, pick, jsonAuthHeaders } from './lib.js';
 
 export const options = rampOptions;
 
@@ -20,7 +20,7 @@ export default function () {
   const issued = http.post(
     `${API}/v1/statements/${s.statement_id}/download-links?period=${s.period_start}`,
     JSON.stringify({}),
-    Object.assign({ tags: { name: 'issue' } }, authHeaders(s.customer_id)));
+    Object.assign({ tags: { name: 'issue' } }, jsonAuthHeaders(s.customer_id)));
   if (issued.status !== 201) {
     return;
   }

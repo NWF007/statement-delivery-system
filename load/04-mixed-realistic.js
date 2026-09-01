@@ -1,7 +1,7 @@
 // The composite that resembles production: 70% browse, 25% issue, 5% full redeem.
 import http from 'k6/http';
 import { check } from 'k6';
-import { API, GATEWAY, rampOptions, pick, authHeaders, monthRange } from './lib.js';
+import { API, GATEWAY, rampOptions, pick, authHeaders, jsonAuthHeaders, monthRange } from './lib.js';
 
 export const options = rampOptions;
 
@@ -21,7 +21,7 @@ export default function () {
   const issued = http.post(
     `${API}/v1/statements/${s.statement_id}/download-links?period=${s.period_start}`,
     JSON.stringify({}),
-    Object.assign({ tags: { name: 'issue' } }, authHeaders(s.customer_id)));
+    Object.assign({ tags: { name: 'issue' } }, jsonAuthHeaders(s.customer_id)));
 
   if (roll < 0.95 || issued.status !== 201) {
     check(issued, { issue: (r) => r.status === 201 });
