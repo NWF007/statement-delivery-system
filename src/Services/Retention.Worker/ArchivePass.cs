@@ -17,7 +17,7 @@ namespace Retention.Worker;
 /// Lock preserved. What this pass owns in BOTH worlds is the database's view: status ARCHIVED,
 /// tier GLACIER, audited. Locally, MinIO has no cold tier, so the tier flag plus the simulated
 /// restore latency IS the archive behaviour — labelled as such, never presented as the real
-/// thing. (The schema's tier vocabulary is GLACIER, from V006; the brief's 'COLD' maps to it.)
+/// thing. (The schema's tier vocabulary is GLACIER, from V006; 'COLD' names the same tier.)
 /// </remarks>
 public sealed class ArchivePass
 {

@@ -22,7 +22,7 @@ namespace StatementDelivery.Domain.Retention;
 /// conflict is hard constraint 2's forbidden move.
 /// </para>
 /// <para>
-/// WHY THIS PRECEDENCE ORDER (ADR-0033, the prompt's 0029):
+/// WHY THIS PRECEDENCE ORDER (ADR-0033):
 /// </para>
 /// <para>
 /// 1. A destroyed key short-circuits everything — there is nothing left to protect or delete;
@@ -47,7 +47,7 @@ public static class RetentionDecisionEngine
     {
         ArgumentNullException.ThrowIfNull(ctx);
 
-        // DEFENCE IN DEPTH (remediation A4): an erased customer with an ACTIVE hold should be
+        // DEFENCE IN DEPTH (ADR-0040): an erased customer with an ACTIVE hold should be
         // impossible - erasure is blocked by holds upstream - so observing it means something
         // went badly wrong, and the one response that cannot compound the damage is to keep
         // treating the statement as held. Callers count retention_erased_under_hold_total when

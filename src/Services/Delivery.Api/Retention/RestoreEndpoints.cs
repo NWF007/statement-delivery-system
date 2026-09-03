@@ -31,9 +31,9 @@ public static class RestoreEndpoints
             .RequireAuthorization()
 
             // Customer-facing and it queues WORK (a simulated or real cold-tier retrieval), so
-            // it shares the per-caller budget the other customer surfaces carry - found by the
-            // Prompt 7 authorization/rate matrix pass. The pending-restore reuse already blunts
-            // repeats; the limiter is the backstop.
+            // it shares the per-caller budget the other customer surfaces carry - a gap found
+            // while reviewing the authorization/rate-limit matrix across every route. The
+            // pending-restore reuse already blunts repeats; the limiter is the backstop.
             .RequireRateLimiting(global::Delivery.Api.Configuration.DeliveryApiExtensions.PerCallerPolicy)
             .WithName("RequestRestore")
             .WithSummary("Requests a restore from cold storage. 202: this takes a while.");

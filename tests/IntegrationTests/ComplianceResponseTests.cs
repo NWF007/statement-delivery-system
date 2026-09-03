@@ -12,8 +12,8 @@ using Xunit;
 namespace IntegrationTests;
 
 /// <summary>
-/// The statutory payloads, pinned (remediation Part E). A 409 with no citation passes a
-/// status-code assertion and fails the requirement — these tests assert the FIELDS.
+/// The statutory payloads, pinned. A 409 with no citation passes a status-code assertion and
+/// fails the requirement — these tests assert the FIELDS.
 /// </summary>
 [Collection(PostgresCollection.Name)]
 public sealed class ComplianceResponseTests
@@ -35,7 +35,7 @@ public sealed class ComplianceResponseTests
     [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]
     public async Task Erasure_BlockedByHold_Returns409_WithCaseReference()
     {
-        // A STATEMENT-scoped hold - the scope the CRITICAL was blind to - must block the
+        // A STATEMENT-scoped hold - the scope the erasure gate was blind to - must block the
         // erasure request AND cite the case, because the reference is the only key that can
         // ever release the block.
         CancellationToken ct = TestContext.Current.CancellationToken;
@@ -143,8 +143,8 @@ public sealed class ComplianceResponseTests
     [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]
     public async Task StatementHold_Placement_PopulatesCustomerId()
     {
-        // The A3 fix at the endpoint: a statement-scoped hold row carries its customer, which
-        // is what makes it visible to the erasure gate (V021, ADR-0040).
+        // The endpoint's half of the customer_id fix: a statement-scoped hold row carries its
+        // customer, which is what makes it visible to the erasure gate (V021, ADR-0040).
         CancellationToken ct = TestContext.Current.CancellationToken;
         (Guid customer, Guid statement) = await SeedPendingWithKeyAsync(retainFuture: true, ct).ConfigureAwait(true);
 
@@ -165,7 +165,7 @@ public sealed class ComplianceResponseTests
                 commandTimeout: 30, cancellationToken: ct)).ConfigureAwait(true);
 
         row.StatementId.ShouldBe(statement);
-        row.CustomerId.ShouldBe(customer, "a null customer here is the exact row shape the CRITICAL depended on");
+        row.CustomerId.ShouldBe(customer, "a null customer here is the exact row shape the customer-scope defect depended on");
     }
 
     [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]

@@ -13,10 +13,10 @@ namespace IntegrationTests;
 /// </summary>
 /// <remarks>
 /// <para>
-/// THE BRIEF ORDERS THIS TESTED BEFORE THE RENDER PIPELINE IS BUILT, AND FOR ONCE THE DRAMA IS
-/// EARNED: a claim bug produces duplicate statements, and duplicate statements live under a
-/// Compliance-mode Object Lock that nothing can delete for seven years. Every other bug in this
-/// subsystem is recoverable; this one is a storage bill with a legal signature.
+/// THIS IS PROVEN BEFORE THE RENDER PIPELINE IS BUILT, AND THE DRAMA IS EARNED: a claim bug
+/// produces duplicate statements, and duplicate statements live under a Compliance-mode Object
+/// Lock that nothing can delete for seven years. Every other bug in this subsystem is recoverable;
+/// this one is a storage bill with a legal signature.
 /// </para>
 /// <para>
 /// <see cref="ConcurrentWorkers_NeverClaimSameItem"/> is the proof that FOR UPDATE SKIP LOCKED
@@ -216,7 +216,7 @@ public sealed class RunClaimTests
     [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]
     public async Task Completion_IsScopedToTheClaimant()
     {
-        // Part C of the RED remediation. A render that outlives the stale window races its
+        // Closing a claim-ownership race. A render that outlives the stale window races its
         // reaped-and-reclaimed successor; without claimed_by in the predicate, the original
         // worker could mark DONE a row the successor now owns. With it, the original's complete
         // and fail both match ZERO rows - a real, distinguishable outcome the caller reports as

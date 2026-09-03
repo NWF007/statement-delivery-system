@@ -47,7 +47,8 @@ public sealed partial class PurgePass
 
     /// <summary>Initialises a new instance of the <see cref="PurgePass"/> class.</summary>
     /// <param name="statements">Statement-side sweep queries.</param>
-    /// <param name="holds">The shared hold resolver - both layers, one implementation (Part B).</param>
+    /// <param name="holds">The shared hold resolver - both layers, one implementation
+    /// (ADR-0037).</param>
     /// <param name="keys">Customer key rows.</param>
     /// <param name="objects">The object store's admin surface.</param>
     /// <param name="unitOfWork">Transactions.</param>
@@ -121,7 +122,7 @@ public sealed partial class PurgePass
         var customerId = new CustomerId(candidate.CustomerId);
 
         // Build the context from the AUTHORITATIVE sources: holds through the SHARED resolver
-        // (both layers, one implementation - Part B), the lock from the object store itself
+        // (both layers, one implementation - ADR-0037), the lock from the object store itself
         // (hard constraint 4 — if S3 says locked, the database's opinion does not matter), the
         // key from its row.
         ObjectRetentionInfo info = candidate.StorageKey is null
@@ -144,9 +145,10 @@ public sealed partial class PurgePass
             case RetentionDecision.BlockedByLegalHold blocked:
                 if (key?.DestroyedAt is not null)
                 {
-                    // The engine's A4 guard fired: this statement is ERASED and HELD at once, a
-                    // state erasure's hold gate exists to make impossible. Blocking is the safe
-                    // response; this metric is the page that says the gate failed somewhere.
+                    // The engine's defence-in-depth guard fired: this statement is ERASED and
+                    // HELD at once, a state erasure's hold gate exists to make impossible.
+                    // Blocking is the safe response; this metric is the page that says the
+                    // gate failed somewhere.
                     _metrics.ErasedUnderHold();
                 }
 

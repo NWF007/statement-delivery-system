@@ -101,7 +101,7 @@ public sealed class AccountRowMapper : IBulkRowMapper<AccountRow>
 /// </summary>
 /// <remarks>
 /// <para>
-/// PROMPT 4 MADE THE CRYPTO COLUMNS MANDATORY FOR AN AVAILABLE STATEMENT. V013 adds
+/// THE CRYPTO COLUMNS ARE MANDATORY FOR AN AVAILABLE STATEMENT. V013 adds
 /// <c>ck_statement_available_has_key_material</c>, so a seeded AVAILABLE row without a wrapped DEK
 /// and a KEK id is now rejected by the database - which is the constraint working, not the seed
 /// tool being awkward.

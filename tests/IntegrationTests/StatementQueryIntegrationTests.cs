@@ -243,8 +243,9 @@ public sealed partial class StatementQueryIntegrationTests
     [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]
     public async Task AppDeliveryRole_CannotDeleteFromStatement()
     {
-        // ACCEPTANCE CHECK 22. The customer-facing API can read statements and nothing else, so a
-        // compromised delivery credential can leak data but cannot destroy it.
+        // READ-ONLY BY PRIVILEGE, NOT BY CONVENTION. The customer-facing API can read statements
+        // and nothing else, so a compromised delivery credential can leak data but cannot destroy
+        // it.
         await using NpgsqlConnection connection =
             await _postgres.OpenAsAsync("app_delivery", TestContext.Current.CancellationToken).ConfigureAwait(true);
 
@@ -273,7 +274,8 @@ public sealed partial class StatementQueryIntegrationTests
     //  rolls back when a delegate throws, which is trivially true, and it did NOT prove the rule
     //  stated in its own first line: AN OPERATION WITH NO AUDIT RECORD MUST BE IMPOSSIBLE.
     //
-    //  It passed for three prompts while that rule was false of every shipped endpoint.
+    //  It passed through three rounds of development while that rule was false of every shipped
+    //  endpoint.
     //
     //  REPLACED BY RedemptionInvariantTests.Redemption_WhenAuditWriteFails_DoesNotConsumeToken,
     //  which drives the real HTTP redemption path with a deliberately broken audit writer and

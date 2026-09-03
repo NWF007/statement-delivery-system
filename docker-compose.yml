@@ -39,13 +39,13 @@ x-service-deps: &service-deps
     condition: service_healthy
   minio:
     condition: service_healthy
-  # ADDED IN PROMPT 4. A healthy MinIO is not the same thing as a PROVISIONED bucket, and since
-  # Prompt 4 the difference is observable: ObjectLockHealthCheck is tagged `ready`, so a service
-  # that starts before `createbuckets` finishes reports NOT READY until the next probe. Without
-  # this the stack still converges, but `docker compose up` shows unready services for no reason a
-  # reader can see, and a FAILED `mc retention set` shows up only as a readiness flap rather than
-  # stopping the stack. One-shot container, no restart policy, so completed_successfully is the
-  # correct condition and it needs no health check of its own.
+  # Added when Object Lock provisioning moved into bucket creation. A healthy MinIO is not the
+  # same thing as a PROVISIONED bucket, and that difference is observable: ObjectLockHealthCheck
+  # is tagged `ready`, so a service that starts before `createbuckets` finishes reports NOT READY
+  # until the next probe. Without this the stack still converges, but `docker compose up` shows
+  # unready services for no reason a reader can see, and a FAILED `mc retention set` shows up only
+  # as a readiness flap rather than stopping the stack. One-shot container, no restart policy, so
+  # completed_successfully is the correct condition and it needs no health check of its own.
   createbuckets:
     condition: service_completed_successfully
   aspire-dashboard:
@@ -227,7 +227,7 @@ services:
       start_period: 10s
     networks: [statement-delivery]
 
-  # ⚠ PROMPT 4 REMEDIATION - THE BUCKET IS NOW CREATED WITH OBJECT LOCK, AND IT HAD TO BE RECREATED.
+  # ⚠ THE BUCKET IS NOW CREATED WITH OBJECT LOCK, AND ANY EXISTING BUCKET HAD TO BE RECREATED.
   #
   # The original definition created the bucket and enabled versioning. It did NOT enable Object
   # Lock, and OBJECT LOCK CANNOT BE ENABLED ON AN EXISTING BUCKET: MinIO requires it at creation
@@ -348,7 +348,7 @@ services:
       # redeeming are separate deployables precisely so a flood against the public one cannot
       # exhaust the authenticated one.
       DownloadLinks__GatewayBaseUrl: http://localhost:${DOWNLOAD_GATEWAY_PORT:-8082}
-      # Prompt 6: the legal-hold endpoints set and release OBJECT-STORE holds (dual-layer
+      # The legal-hold endpoints set and release OBJECT-STORE holds (dual-layer
       # enforcement, ADR-0037), so this service now holds storage credentials - scoped, in
       # production IAM, to Get/PutObjectLegalHold and nothing else. It still cannot read or
       # write statement content: it registers no content store.
@@ -383,7 +383,7 @@ services:
       Crypto__LocalKeys__MasterSecret: ${CRYPTO_MASTER_SECRET}
     ports:
       - "${DOWNLOAD_GATEWAY_PORT:-8082}:8080"
-    # THE statement-content VOLUME IS GONE. It backed the Prompt 3 filesystem adapter behind
+    # THE statement-content VOLUME IS GONE. It backed the original filesystem adapter behind
     # IStatementContentStore, which the encrypting object-storage adapter has replaced. A volume
     # nothing reads is somewhere stale plaintext sits until someone finds it.
     networks: [statement-delivery]
@@ -454,8 +454,8 @@ services:
       Postgres__PrimaryConnectionString: Host=pgbouncer;Port=6432;Database=statements_retention;Username=app_retention;Password=${APP_RETENTION_PASSWORD}
       Postgres__ReplicaConnectionString: ${POSTGRES_REPLICA_CONNECTION}
       Cache__ConnectionString: redis:6379
-      # Object storage credentials RETURN here in Prompt 6, exactly as the Prompt 5 note promised:
-      # in the same commit as the purge job that needs them. This is now the ONLY service allowed
+      # Object storage credentials RETURN here, withheld until now on purpose: they arrive in the
+      # same commit as the purge job that needs them. This is now the ONLY service allowed
       # to DELETE an object (its production IAM: DeleteObject*, GetObjectRetention,
       # Get/PutObjectLegalHold, ListBucket, GetObject for reconciliation HEADs) - and the Object
       # Lock readiness check arrives with them.

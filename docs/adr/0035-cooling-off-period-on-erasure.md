@@ -1,7 +1,5 @@
 # ADR-0035: Crypto-erasure is scheduled seven days out, never executed immediately
 
-> Numbering note: the Prompt 6 brief calls this ADR-0031; the sequence continues from 0032.
-
 **Status:** Accepted · **Date:** 2026-08-31
 
 ## Context

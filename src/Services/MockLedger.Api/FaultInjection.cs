@@ -23,8 +23,8 @@ public sealed class LatencyOptions
 /// A resilience policy tested only against an in-process stub is not tested: a stub cannot time
 /// out on the wire, cannot return 429 with Retry-After from a real socket, and cannot produce the
 /// half-open flapping a circuit breaker actually sees. Every knob here is settable through
-/// configuration - including at runtime through the test host - so the failure tests in Part J
-/// dial in exactly the outage they need.
+/// configuration - including at runtime through the test host - so the resilience tests dial in
+/// exactly the outage they need.
 /// </remarks>
 public sealed class FaultInjectionOptions
 {
@@ -45,7 +45,8 @@ public sealed class FaultInjectionOptions
     /// <summary>
     /// Gets or sets the accounts that return MALFORMED payloads - a 200 whose body does not
     /// deserialise. This is the poison-item path: the worker's ledger client throws on parse, the
-    /// attempt burns, and after the ceiling the item quarantines. See Part G.
+    /// attempt burns, and after the ceiling the claim query stops handing the item out - it is
+    /// quarantined.
     /// </summary>
     public IList<Guid> PoisonAccountIds { get; } = [];
 }

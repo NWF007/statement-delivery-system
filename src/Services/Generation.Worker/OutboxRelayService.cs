@@ -31,9 +31,9 @@ public sealed partial class OutboxRelayService : BackgroundService
 {
     private const string LeaseName = "outbox-relay";
 
-    // Explicit columns, never SELECT * (the brief's sketch used SELECT *; the query-discipline
-    // architecture test forbids it, and it is wrong here anyway - payload is the only wide
-    // column and the relay needs every row's copy of it exactly once).
+    // Explicit columns, never SELECT * (the original sketch of this query used SELECT *; the
+    // query-discipline architecture test forbids it, and it is wrong here anyway - payload is
+    // the only wide column and the relay needs every row's copy of it exactly once).
     //
     // FOR UPDATE SKIP LOCKED for the same reason as the claim query: a second relay instance
     // during lease handover skips rather than blocks, and no event is published twice by two

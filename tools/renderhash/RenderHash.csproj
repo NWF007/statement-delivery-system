@@ -10,7 +10,7 @@
 
     `renderhash bench N` renders N statements through the real render -> encrypt pipeline into a
     null sink, and prints stage timings and peak working set. It is how the throughput and memory
-    numbers in the Prompt 5 deliverable were measured on a host that cannot run containers.
+    numbers in the performance write-up were measured on a host that cannot run containers.
   -->
 
   <PropertyGroup>

@@ -13,12 +13,12 @@ namespace Generation.Worker;
 /// <remarks>
 /// <para>
 /// Extracted from <see cref="RenderPipeline"/> so its FAILURE semantics are testable without a
-/// database: the Prompt 5 audit's HIGH 1 lived exactly here, and no test could reach it through
+/// database: a high-severity defect lived exactly here, and no test could reach it through
 /// the full pipeline. The renderer writes into the pipe; the storage writer consumes the reader;
 /// the pause threshold caps in-flight plaintext at <see cref="PipeBufferBytes"/>.
 /// </para>
 /// <para>
-/// THE FAILURE CONTRACT (the part the audit found broken): when the WRITER faults, the renderer
+/// THE FAILURE CONTRACT (this is the part that was broken): when the WRITER faults, the renderer
 /// may be parked at the pause threshold with nobody left to read. It must be unblocked - by
 /// completing the reader with the writer's exception - and the writer's exception must be the one
 /// that propagates. A drain that waits forever converts a storage outage into a permanently
@@ -77,8 +77,8 @@ public static class RenderStreamBridge
         // buffer it blocks at the pause threshold BEFORE the writer below is ever started. That
         // is a success-path deadlock for every large statement, with a healthy storage backend,
         // discovered when the red-before-green test for the failure path hung the whole test host
-        // instead of failing. The audit's HIGH 1 was understated: it described the failure path,
-        // and the shipped code could not complete the success path either.
+        // instead of failing. The defect as first described was understated: it covered only the
+        // failure path, and the shipped code could not complete the success path either.
         Task renderTask = Task.Run(
             () => RenderIntoAsync(renderer, document, pipe.Writer, onRenderSeconds, time, cancellationToken),
             CancellationToken.None);

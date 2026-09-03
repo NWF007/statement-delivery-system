@@ -19,7 +19,7 @@ namespace Delivery.Api.Retention;
 /// FIRST, then the database row. Work the crash through both orders:
 /// </para>
 /// <para>
-/// Storage hold set, DB insert fails → an over-protected object. Reconciliation (Part G, check 3)
+/// Storage hold set, DB insert fails → an over-protected object. Reconciliation (check 3)
 /// reports it; a human releases it. Harmless. DB inserted, storage hold fails → the system
 /// BELIEVES an object is held that is physically deletable — the dangerous direction, because
 /// every read of the policy layer now reports protection that does not exist. So storage first.
@@ -103,8 +103,8 @@ public static class LegalHoldEndpoints
             {
                 // customer_id ALWAYS populated (V021, ADR-0040): the erasure gate asks "any
                 // hold affecting this customer?" with one indexed predicate, and a statement-
-                // scoped hold that left it null was invisible to that gate - the audit's
-                // CRITICAL. Scope is expressed by statement_id alone now.
+                // scoped hold that left it null was invisible to that gate - a critical defect.
+                // Scope is expressed by statement_id alone now.
                 await holds.PlaceAsync(
                     new LegalHoldRow(
                         holdId, statementId, statement.CustomerId, request!.CaseReference!.Trim(),
@@ -208,7 +208,7 @@ public static class LegalHoldEndpoints
         Guid holdId,
 
         // Explicit [FromBody]: minimal APIs refuse an INFERRED body on DELETE at route-building
-        // time, which broke the whole host's endpoint resolution - found by the Prompt 7
+        // time, which broke the whole host's endpoint resolution - caught by the
         // endpoint-enumeration test. An explicit attribute is allowed, and the release reason
         // genuinely belongs in the body.
         [Microsoft.AspNetCore.Mvc.FromBody] ReleaseHoldRequest? request,

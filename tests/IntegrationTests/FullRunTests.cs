@@ -57,12 +57,12 @@ public sealed class FullRunTests
         RunCounters counters = await WaitForCompletionAsync(repo, run.Id, ct).ConfigureAwait(true);
         runStopwatch.Stop();
 
-        // ---- Acceptance 56: counts reconcile ---------------------------------------------------
+        // ---- Counts reconcile ------------------------------------------------------------------
         counters.Done.ShouldBe(Accounts);
         counters.FailedFinal.ShouldBe(0);
         (await repo.FindAsync(run.Id, ct).ConfigureAwait(true))!.TotalItems.ShouldBe(Accounts);
 
-        // ---- Acceptance 57: statements exist and are encrypted ---------------------------------
+        // ---- Statements exist and are encrypted ------------------------------------------------
         (await ScalarAsync<long>(
             """
             SELECT count(*) FROM statement
@@ -72,7 +72,7 @@ public sealed class FullRunTests
             new { start = period.Start }, ct).ConfigureAwait(true))
             .ShouldBe(Accounts);
 
-        // ---- Acceptance 59: issue a link, download, verify the hash ----------------------------
+        // ---- Issue a link, download, verify the hash -------------------------------------------
         StatementProbe probe = await ProbeAsync(accounts[42], period, ct).ConfigureAwait(true);
 
         using var api = new DeliveryApiFactory(_postgres.ConnectionStringFor("app_delivery"));
@@ -94,7 +94,7 @@ public sealed class FullRunTests
             "downloaded plaintext must hash to the row's content_sha256 - render, encrypt, store, "
             + "decrypt and stream all agreeing about the same bytes");
 
-        // ---- Acceptance 69: the outbox drains --------------------------------------------------
+        // ---- The outbox drains -----------------------------------------------------------------
         var drain = Stopwatch.StartNew();
         while (await ScalarAsync<long>(
             "SELECT count(*) FROM outbox WHERE published_at IS NULL;", new { }, ct).ConfigureAwait(true) > 0)
@@ -108,7 +108,7 @@ public sealed class FullRunTests
             new { }, ct).ConfigureAwait(true))
             .ShouldBeGreaterThanOrEqualTo(Accounts, "every rendered statement published its event");
 
-        // ---- Acceptance 70: the audit chain still verifies after the whole run -----------------
+        // ---- The audit chain still verifies after the whole run --------------------------------
         var verifier = new PostgresAuditVerifier(_postgres.ConnectionFactoryFor("app_delivery"));
         IEnumerable<(short ChainId, long LastSeq)> heads = await HeadsAsync(ct).ConfigureAwait(true);
 

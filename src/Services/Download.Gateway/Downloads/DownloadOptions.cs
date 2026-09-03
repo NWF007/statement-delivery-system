@@ -114,10 +114,10 @@ public sealed class DownloadMetrics : IDisposable
         // that records where its bytes live, so a row that is AVAILABLE with no readable object
         // means the database and the object store have diverged.
         //
-        // EMITTED NOW, BEFORE THE JOB THAT FORMALISES IT. Prompt 6 adds a reconciliation sweep and
-        // this divergence is its CHECK 1; a counter that only starts existing alongside the job
-        // that reports it can never answer "how long has this been happening?" - and that is the
-        // first question anyone will ask.
+        // THIS COUNTER PREDATES THE JOB THAT FORMALISES IT. The reconciliation sweep that came
+        // later treats this divergence as its CHECK 1; a counter that only starts existing
+        // alongside the job that reports it can never answer the first question anyone will
+        // ask: "how long has this been happening?"
         _contentMissing = _meter.CreateCounter<long>(
             "statement_content_missing_total",
             unit: "{failure}",

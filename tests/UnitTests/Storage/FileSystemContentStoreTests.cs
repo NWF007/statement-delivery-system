@@ -11,9 +11,10 @@ namespace UnitTests.Storage;
 /// </summary>
 /// <remarks>
 /// <para>
-/// WHY THE FILESYSTEM ADAPTER STILL EXISTS. No deployed service registers it - Prompt 4 swapped
-/// every one of them to the encrypting S3 store. It is kept as the test double for the PORT, and
-/// this file is what makes that a true statement rather than a comment on dead code.
+/// WHY THE FILESYSTEM ADAPTER STILL EXISTS. No deployed service registers it - every one of them
+/// was swapped to the encrypting S3 store when envelope encryption landed. It is kept as the test
+/// double for the PORT, and this file is what makes that a true statement rather than a comment on
+/// dead code.
 /// </para>
 /// <para>
 /// The port has three obligations that have nothing to do with encryption: return null rather than

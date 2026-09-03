@@ -7,7 +7,8 @@ namespace Retention.Worker;
 /// <remarks>
 /// Every value here DERIVES from <see cref="StorageKeyScheme"/> - count, width, format. The
 /// original version carried its own literals (256, "x2") beside the scheme's (4096, three hex
-/// chars), and the sweep spent its life listing prefixes no writer ever produced (audit HIGH 2).
+/// chars), and the sweep spent its life listing prefixes no writer ever produced - it matched
+/// nothing and reported nothing, which is indistinguishable from a clean bucket.
 /// <c>OrphanSweep_PrefixSet_MatchesStorageKeyScheme</c> fails if the two ever disagree again.
 /// </remarks>
 public static class OrphanShardWalk

@@ -12,19 +12,20 @@ using Xunit;
 namespace IntegrationTests;
 
 /// <summary>
-/// Publishing a rendered statement: the write path Prompt 5 will build generation on.
+/// Publishing a rendered statement: the write path statement generation is built on.
 /// </summary>
 /// <remarks>
 /// <para>
 /// Three constraints govern an AVAILABLE row - <c>ck_statement_available_has_storage</c> (V006),
 /// <c>ck_statement_available_has_key_material</c> (V013) and
-/// <c>ck_statement_available_has_digest</c> (V015). Between Prompt 4 and this change there was
-/// no method in the repository that could satisfy all three, and the one method that set
-/// <c>status</c> could satisfy none of them.
+/// <c>ck_statement_available_has_digest</c> (V015). Until this change there was no method in the
+/// repository that could satisfy all three, and the one method that set <c>status</c> could
+/// satisfy none of them.
 /// </para>
 /// <para>
-/// It had zero callers, so nothing failed. Prompt 5's first write would have been the first caller,
-/// and a check-constraint violation arriving during statement generation looks like a crypto defect.
+/// It had zero callers, so nothing failed. The generation pipeline's first write would have been
+/// the first caller, and a check-constraint violation arriving during statement generation looks
+/// like a crypto defect.
 /// </para>
 /// </remarks>
 [Collection(PostgresCollection.Name)]
@@ -123,7 +124,7 @@ public sealed class StatementPublishTests
         // This issues the EXACT UPDATE the deleted UpdateStatusAsync issued - status and nothing
         // else - and asserts the database refuses it. That method had zero callers, so no test ever
         // executed this statement against a schema carrying V013 and V015, and the trap sat there
-        // waiting for Prompt 5.
+        // waiting for the first real write from the generation pipeline.
         //
         // It deliberately bypasses the repository. Going through MarkAvailableAsync would fail in
         // C# on the null-envelope guard and prove only that the guard exists; the claim being made

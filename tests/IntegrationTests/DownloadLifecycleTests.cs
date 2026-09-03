@@ -28,10 +28,10 @@ public sealed class DownloadLifecycleTests
     /// <param name="postgres">The shared PostgreSQL fixture.</param>
     /// <param name="minio">The shared object storage fixture.</param>
     /// <remarks>
-    /// PROMPT 4 REPLACED THE TEMP DIRECTORY WITH A BUCKET. These tests are otherwise unchanged: the
-    /// same assertions, over the same endpoints, against content that is now encrypted at rest. That
-    /// they needed no other edit is the clearest evidence available that the port was the right
-    /// shape - the fixture changed, the expectations did not.
+    /// THE MOVE TO OBJECT STORAGE REPLACED THE TEMP DIRECTORY WITH A BUCKET. These tests are
+    /// otherwise unchanged: the same assertions, over the same endpoints, against content that is
+    /// now encrypted at rest. That they needed no other edit is the clearest evidence available
+    /// that the port was the right shape - the fixture changed, the expectations did not.
     /// </remarks>
     public DownloadLifecycleTests(PostgresFixture postgres, MinioFixture minio)
     {
@@ -55,7 +55,7 @@ public sealed class DownloadLifecycleTests
     private static Uri Redeem(string plaintext) => new("/v1/d/" + plaintext, UriKind.Relative);
 
     // =============================================================================================
-    //  J2. THE CRITICAL CONCURRENCY TEST
+    //  THE CRITICAL CONCURRENCY TEST
     // =============================================================================================
 
     [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]
@@ -155,7 +155,7 @@ public sealed class DownloadLifecycleTests
     }
 
     // =============================================================================================
-    //  J3. SECURITY
+    //  SECURITY
     // =============================================================================================
 
     [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]
@@ -1156,8 +1156,8 @@ public sealed class DownloadLifecycleTests
     [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]
     public async Task EndToEndDownload_200MB_UsesConstantMemory()
     {
-        // THE PROMPT 4 VERSION OF THE PROMPT 3 TEST, and the reason it is a separate test rather
-        // than a rename: it asserts one thing more.
+        // THE ENCRYPTED-STORAGE SUCCESSOR TO THE PLAINTEXT STREAMING TEST, and the reason it is a
+        // separate test rather than a rename: it asserts one thing more.
         //
         // LargeStatement_StreamsWithoutHeapGrowth proves the transfer is O(1) in memory. This proves
         // that it is O(1) in memory AND that what came out is byte-for-byte what went in - through a

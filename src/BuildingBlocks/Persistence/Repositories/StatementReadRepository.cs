@@ -61,7 +61,7 @@ public sealed class StatementReadRepository : IStatementReadRepository
     /// First page. No cursor predicate at all, rather than a null-tolerant one.
     /// </summary>
     /// <!--
-    /// WHY THREE STATUSES (Prompt 6, E4): an ARCHIVED statement must be listable or the restore
+    /// WHY THREE STATUSES: an ARCHIVED statement must be listable or the restore
     /// flow is unreachable from the UI, and a PURGED one must appear - with its status and no
     /// download offered - because "this existed and was destroyed" is a fact the customer is
     /// entitled to see. PENDING and FAILED stay hidden: unfinished work is not a customer fact.

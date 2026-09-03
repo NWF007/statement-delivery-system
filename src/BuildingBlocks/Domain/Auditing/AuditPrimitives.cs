@@ -226,7 +226,7 @@ public static class DenialReason
     /// <remarks>
     /// Should be unreachable: V013 and V015 require key material and a digest on an AVAILABLE row,
     /// and the write path sets the storage key in the same statement. If it happens, the row and
-    /// the object store disagree - reconciliation CHECK 1 in Prompt 6. Counted by
+    /// the object store disagree - what reconciliation CHECK 1 looks for. Counted by
     /// <c>statement_content_missing_total</c>, which is alerted on any non-zero value.
     /// </remarks>
     public const string StorageUnavailable = "STORAGE_UNAVAILABLE";

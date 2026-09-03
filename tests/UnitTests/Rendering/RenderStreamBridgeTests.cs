@@ -13,7 +13,7 @@ using Xunit;
 namespace UnitTests.Generation;
 
 /// <summary>
-/// The bridge's FAILURE contract - the Prompt 5 audit's HIGH 1.
+/// The bridge's FAILURE contract - the site of a high-severity defect.
 /// </summary>
 /// <remarks>
 /// When the storage writer faults, a renderer parked at the pipe's 256&#160;KB pause threshold has

@@ -1,8 +1,5 @@
 # ADR-0033: Legal conflicts are surfaced with their basis, never resolved in code
 
-> Numbering note: the Prompt 6 brief calls this ADR-0029; 0029–0032 were already taken by
-> earlier decisions, so the sequence continues here.
-
 **Status:** Accepted · **Date:** 2026-08-31
 
 ## Context

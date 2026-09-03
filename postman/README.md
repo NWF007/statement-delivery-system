@@ -8,9 +8,9 @@ Exercises the two public services end to end:
 | **Download.Gateway** | `8082` | Unauthenticated capability-URL redemption (`/v1/d/{token}`) |
 
 The collection was **derived from the running APIs' OpenAPI documents**, fetched from
-`http://localhost:8081/openapi/v1.json` and `http://localhost:8082/openapi/v1.json`
-(the brief's `/v3/api-docs` path is Swashbuckle's; this stack uses .NET's built-in OpenAPI at
-`/openapi/{document}.json`). Where the live contract and the brief disagreed, the contract won —
+`http://localhost:8081/openapi/v1.json` and `http://localhost:8082/openapi/v1.json` (the
+`/v3/api-docs` path the brief specifies is Swashbuckle's; this stack uses .NET's built-in OpenAPI
+at `/openapi/{document}.json`). Where the live contract and the brief disagreed, the contract won —
 see **Findings** below.
 
 Files:
@@ -163,7 +163,7 @@ alongside the console output.
 
 Reported as the brief asked, contract-wins:
 
-1. **No per-statement `access-log` endpoint exists.** The brief's folder 04 and §5 call for
+1. **No per-statement `access-log` endpoint exists.** Folder 04 and §5 of the brief call for
    `GET /v1/statements/{id}/access-log`; there is no such route in the code or either OpenAPI
    document. Access events live in the audit chain, verified through `GET /v1/audit/verify`. The
    collection's folder 04 does chain verification and scope, and notes the absence in its

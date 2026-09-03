@@ -7,9 +7,9 @@
 V008 modelled hold scope as "exactly one of statement_id / customer_id is set". Under that
 model, the erasure gate's question — *does any hold affect this customer?* — was answered with
 `WHERE customer_id = @customerId`, which statement-scoped holds (customer_id NULL) never match.
-The Prompt 6 audit's CRITICAL: a litigation hold on one statement did not block the erasure
-that would destroy that statement's readability. The engine was right; the data model made the
-right query impossible to write simply, so the simple query was wrong.
+The gap was critical: a litigation hold on one statement did not block the erasure that would
+destroy that statement's readability. The engine was right; the data model made the right query
+impossible to write simply, so the simple query was wrong.
 
 ## Decision
 
@@ -37,7 +37,7 @@ repeals retention for the whole customer (`Purge_NotBlockedBy_SiblingStatementHo
   without touching the row — and holds are rare, short-lived rows.
 - Defence in depth behind it: the decision engine now blocks an erased-under-active-hold
   combination outright and `retention_erased_under_hold_total` pages if that state is ever
-  observed (remediation A4).
+  observed.
 
 ## Revisit when
 

@@ -6,8 +6,8 @@
   </PropertyGroup>
 
   <!--
-    ADDED BY PROMPT 4. Prompt 1 created four building blocks; this is the fifth, and it is purely
-    additive - nothing that existed before it changed shape to accommodate it.
+    ADDED WHEN ENVELOPE ENCRYPTION LANDED, as a fifth building block alongside the original four.
+    It is purely additive - nothing that existed before it changed shape to accommodate it.
 
     WHY ITS OWN PROJECT rather than a folder inside Persistence or ServiceDefaults:
 

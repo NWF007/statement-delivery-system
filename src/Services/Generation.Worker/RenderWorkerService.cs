@@ -21,7 +21,7 @@ namespace Generation.Worker;
 /// can take it, instead of accumulating invisibly in this replica's memory.
 /// </para>
 /// <para>
-/// SHUTDOWN (Part E4): claiming stops immediately; in-flight renders get the configured grace;
+/// GRACEFUL SHUTDOWN: claiming stops immediately; in-flight renders get the configured grace;
 /// whatever is still sitting unprocessed in the channel is drained WITHOUT processing and
 /// released back to QUEUED - attempts stay burned, because the claim happened. A SIGKILLed pod
 /// runs none of this, which is what the reaper is for.
@@ -133,8 +133,9 @@ public sealed partial class RenderWorkerService : BackgroundService
         await claimer.ConfigureAwait(false);
         await Task.WhenAll(renderers).ConfigureAwait(false);
 
-        // Shutdown drain (E4): anything the renderers left in the channel was claimed but never
-        // started. Give it back - scoped to OUR claims, attempts intact.
+        // Shutdown drain, as the class remarks promise: anything the renderers left in the
+        // channel was claimed but never started. Give it back - scoped to OUR claims, attempts
+        // intact.
         if (stoppingToken.IsCancellationRequested)
         {
             var unstarted = new List<long>();
@@ -215,9 +216,10 @@ public sealed partial class RenderWorkerService : BackgroundService
         await foreach (ClaimedItem item in ReadUntilStoppedAsync(reader, stoppingToken).ConfigureAwait(false))
         {
             // NOT linked directly to stoppingToken - that would axe an in-flight render the
-            // instant SIGTERM lands, which is the opposite of E4. Instead the render's token
-            // fires GRACE after shutdown begins: an item mid-flight when SIGTERM arrives gets
-            // the budget to finish; one starting after shutdown began gets the remaining budget.
+            // instant SIGTERM lands, which is the opposite of the graceful shutdown this worker
+            // promises. Instead the render's token fires GRACE after shutdown begins: an item
+            // mid-flight when SIGTERM arrives gets the budget to finish; one starting after
+            // shutdown began gets the remaining budget.
             using var grace = new CancellationTokenSource();
             using CancellationTokenRegistration onStop = stoppingToken.Register(
                 static (state, _) => ((CancellationTokenSource)state!).CancelAfter(
@@ -248,7 +250,7 @@ public sealed partial class RenderWorkerService : BackgroundService
             }
             catch (StatementDelivery.Domain.Exceptions.CustomerKeyDestroyedException ex)
             {
-                // Part G: deterministic - the customer's key is destroyed or scheduled, and no
+                // DETERMINISTIC FAILURE: the customer's key is destroyed or scheduled, and no
                 // retry changes that. FAILED at the attempts ceiling, so the claim query never
                 // hands the item out again; the run continues.
                 _ = activity?.SetStatus(ActivityStatusCode.Error, ex.GetType().Name);
@@ -274,7 +276,8 @@ public sealed partial class RenderWorkerService : BackgroundService
                 _ = activity?.SetStatus(ActivityStatusCode.Error, ex.GetType().Name);
                 _metrics.ItemFailed(ex.GetType().Name);
 
-                // Message and TYPE only - never a stack trace, never content (Part G1).
+                // Message and TYPE only - never a stack trace, never content: this string is
+                // persisted in the item's last_error column.
                 string reason = $"{ex.GetType().Name}: {ex.Message}";
                 int recorded = await _runs
                     .FailItemAsync(item.ItemId, reason, workerId, CancellationToken.None).ConfigureAwait(false);

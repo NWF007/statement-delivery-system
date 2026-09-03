@@ -32,12 +32,12 @@ The environment asymmetry is the mitigation, and it is the honest trade: Develop
 ### ⚠ Lock expiry is not deletion
 This is the trap that costs money quietly. When the retain-until date passes, the object becomes **eligible** for deletion. Nothing removes it. The storage bill continues for as long as it exists, which without an explicit purge job is forever.
 
-A system that set a seven-year retention and assumed expiry meant cleanup would believe it had a retention policy while paying to store 2.5 billion objects in perpetuity — and the discrepancy would surface as an unexplained storage bill years after anyone remembered writing this. The purge job is Prompt 6's work; this ADR is where the requirement is recorded so it cannot be forgotten in the meantime.
+A system that set a seven-year retention and assumed expiry meant cleanup would believe it had a retention policy while paying to store 2.5 billion objects in perpetuity — and the discrepancy would surface as an unexplained storage bill years after anyone remembered writing this. The purge job is still to be built; this ADR is where the requirement is recorded so it cannot be forgotten in the meantime.
 
 ### Object Lock cannot be enabled on an existing bucket
 It must be set at bucket creation (`mc mb --with-lock`, or `ObjectLockEnabledForBucket` on `CreateBucket`). Both MinIO's community build and S3 enforce this; newer MinIO AIStor releases relax it, but the pinned community image does not — and since S3 does not either, the local environment should mirror production rather than mask the constraint.
 
-Prompt 1's `createbuckets` container created the bucket with versioning and **without** lock. That is not a config change to correct: **the bucket must be destroyed and recreated**, `docker compose down -v` included. Locally that is free. In production it would be a 470 TB migration — which is precisely why it is worth getting right in a scaffold, where the cost is one command.
+The original `createbuckets` container created the bucket with versioning and **without** lock. That is not a config change to correct: **the bucket must be destroyed and recreated**, `docker compose down -v` included. Locally that is free. In production it would be a 470 TB migration — which is precisely why it is worth getting right in a scaffold, where the cost is one command.
 
 Enabling Object Lock also enables versioning permanently, and versioning can then never be disabled. That is a feature: it is what makes the immutability claim survive an incident in which somebody would like to turn it off.
 
@@ -51,7 +51,7 @@ Configuration is not evidence. Three things check it:
 ## Consequences
 - Compose logs `mc version info` and `mc retention info` after provisioning, so the container output proves the settings applied rather than proving the commands were issued.
 - A statement cannot be corrected in place. It never could — a regeneration is a new row and a new object at a new key (`-v2.enc`), by ADR-0009's versioning rule — and Object Lock now enforces what the schema already intended.
-- Retention and legal hold interact: a legal hold must be able to *extend* retention past the object's date, never shorten it. Prompt 6.
+- Retention and legal hold interact: a legal hold must be able to *extend* retention past the object's date, never shorten it. ADR-0037 works that interaction out at the storage layer — an S3 legal hold stacks with Compliance retention, so an object under both stays locked until the hold is lifted *and* the retention expires — and ADR-0033 places a hold above statutory retention in the precedence order.
 
 ## Revisit when
 

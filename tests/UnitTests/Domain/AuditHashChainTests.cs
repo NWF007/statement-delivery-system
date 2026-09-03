@@ -191,7 +191,7 @@ public sealed class AuditHashChainTests
         // Deleting from the END is the one attack a chain alone cannot see: what remains is a
         // shorter, internally consistent chain. It is detectable ONLY against an independently
         // held terminal hash - which is precisely what IChainAnchor exists to provide, and why
-        // the D6 limitation is stated rather than hidden.
+        // the limitation is stated rather than hidden.
         List<Link> full = BuildChain(20);
         byte[] trustedTerminalHash = full[^1].Hash;
 

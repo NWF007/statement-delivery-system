@@ -23,7 +23,7 @@ WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 builder.AddServiceDefaults();
 builder.AddPersistence(serviceName: "delivery-api");
 
-// Object storage arrives in Prompt 6, and ONLY the admin surface: the legal-hold endpoints set
+// Object storage is registered for ONLY the admin surface: the legal-hold endpoints set
 // and release object-store holds (dual-layer enforcement, ADR-0037). This service still cannot
 // read or write statement CONTENT - it registers no content store, and in production its IAM
 // principal is scoped to Get/PutObjectLegalHold and nothing else.

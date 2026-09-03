@@ -35,7 +35,13 @@ public static class StorageKeyScheme
     /// <summary>The number of distinct leading prefixes: 16^<see cref="ShardWidth"/>.</summary>
     public const int ShardCount = 4096;
 
-    /// <summary>The shard prefix's width in hex characters. Every consumer that iterates or formats shards derives from THIS, never a local literal - a constant duplicated in two files is how the orphan sweep went blind (audit HIGH 2).</summary>
+    /// <summary>
+    /// The shard prefix's width in hex characters. Every consumer that iterates or formats shards
+    /// derives from THIS, never a local literal - a constant duplicated in two files is how the
+    /// orphan sweep went blind, listing prefixes no writer had ever produced.
+    /// <c>OrphanSweep_PrefixSet_MatchesStorageKeyScheme</c> fails if a copy ever drifts from this
+    /// value again.
+    /// </summary>
     public const int ShardWidth = 3;
 
     /// <summary>The object key suffix. Encrypted content, and the name says so.</summary>

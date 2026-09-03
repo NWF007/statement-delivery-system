@@ -15,7 +15,7 @@ namespace Generation.Worker;
 /// <para>
 /// Every replica hosts this service; only the lease holder acts. Scale to 400 replicas and you
 /// get 400 renderers and exactly one orchestrator, with no separate deployment - this is why
-/// the Prompt 1 lease abstraction exists. Lose the holder and a standby takes over within one
+/// the shared lease abstraction exists. Lose the holder and a standby takes over within one
 /// lease TTL, resuming from the database's state rather than from anything held in memory.
 /// </para>
 /// <para>

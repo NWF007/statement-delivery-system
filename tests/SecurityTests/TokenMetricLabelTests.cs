@@ -154,10 +154,10 @@ public sealed partial class TokenMetricLabelTests
         DenialReason.SubjectMismatch,
         DenialReason.NoSubjectClaim,
 
-        // Added by Prompt 4. A new denial reason that is not on this list still reaches the metric -
-        // it just collapses to UNCLASSIFIED, so the label space stays closed and no token can leak.
-        // But the reason then tells an operator nothing, and DECRYPTION_FAILED is the one reason on
-        // this list that should page somebody.
+        // Added when envelope decryption became a way a download can fail. A new denial reason that
+        // is not on this list still reaches the metric - it just collapses to UNCLASSIFIED, so the
+        // label space stays closed and no token can leak. But the reason then tells an operator
+        // nothing, and DECRYPTION_FAILED is the one reason on this list that should page somebody.
         DenialReason.DecryptionFailed,
     ];
 

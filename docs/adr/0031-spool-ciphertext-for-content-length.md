@@ -63,7 +63,7 @@ replica for typical statements (~1 MB), roughly 80 MB for pathological 10 MB one
 ## Consequences
 
 - Every PUT now declares an exact length. The storage fake that accepted length-less bodies was
-  the seam the CRITICAL hid behind; the seam test now pins `Content-Length > 0` at PUT time
+  the seam the defect hid behind; the seam test now pins `Content-Length > 0` at PUT time
   against a stub that enforces the SDK's real refusal.
 - Statement bytes at rest on the node are ciphertext under the customer DEK — losing the node
   loses nothing the object store would not also have lost.

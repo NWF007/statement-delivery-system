@@ -17,8 +17,8 @@ namespace StatementDelivery.ServiceDefaults.Auditing;
 /// <see cref="AuditEntry"/> at every call site, re-deciding the conventions RequestAudit
 /// encodes (actor derivation, empty-context default, UTC stamping) - and since the context
 /// dictionary feeds the canonical hash, two services that drift in those conventions produce
-/// chains an investigator has to read with two rulebooks. This was flagged in the Prompts 1-4
-/// audit verification; Prompt 5's generation worker is its first consumer.
+/// chains an investigator has to read with two rulebooks. The generation worker is its first
+/// consumer.
 /// </para>
 /// <para>
 /// Everything here follows ADR-0025: an event describing the outcome of a state change takes the

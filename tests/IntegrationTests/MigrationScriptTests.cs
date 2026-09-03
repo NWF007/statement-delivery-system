@@ -195,9 +195,9 @@ public sealed partial class MigrationScriptTests
         // and the lock blocks every read and every write for the duration - a migration that looked
         // like three lines takes the platform down.
         //
-        // The rule was documented from Prompt 1 and broken by the first script that added a
-        // constraint to a table it did not create. Documented and unenforced is how that happens, so
-        // it is a test now.
+        // The rule was documented from the very first migration and broken by the first script that
+        // added a constraint to a table it did not create. Documented and unenforced is how that
+        // happens, so it is a test now.
         foreach ((string name, string sql) in EmbeddedScripts())
         {
             string code = StripComments(sql);

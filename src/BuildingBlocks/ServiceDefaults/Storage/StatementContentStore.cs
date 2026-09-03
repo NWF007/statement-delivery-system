@@ -28,7 +28,7 @@ public sealed record StatementContent(Stream Stream, long Length, string Content
 /// </summary>
 /// <remarks>
 /// <para>
-/// THE SEAM PROMPT 4 REPLACED, AND IT HELD. The encrypting object-storage adapter
+/// THE SEAM THE ENCRYPTION SWAP WENT THROUGH, AND IT HELD. The encrypting object-storage adapter
 /// (<c>S3StatementContentStore</c>) went behind this interface and the download gateway's request
 /// handling did not change by a single line - only its dependency registration, and one catch clause
 /// for a failure mode that did not previously exist. This paragraph is written in the past tense
@@ -82,8 +82,8 @@ public sealed class FileSystemContentStoreOptions
 /// </summary>
 /// <remarks>
 /// <para>
-/// UNENCRYPTED, AND KEPT ON PURPOSE. No deployed service registers this any more - Prompt 4 swapped
-/// every one of them to the encrypting S3 adapter. It survives as the TEST DOUBLE for the port:
+/// UNENCRYPTED, AND KEPT ON PURPOSE. No deployed service registers this any more - every one of
+/// them was swapped to the encrypting S3 adapter. It survives as the TEST DOUBLE for the port:
 /// exercising <c>IStatementContentStore</c> without a bucket, a key hierarchy or a container, which
 /// is what keeps the port's own contract (null for absent, a forward-only stream, a traversal guard
 /// on the key) testable in isolation from everything that now sits behind it.

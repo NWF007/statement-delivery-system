@@ -34,7 +34,7 @@ public sealed class LeaseManagerTests
     [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]
     public async Task ExactlyOneHolder_WinsTheLease()
     {
-        // ACCEPTANCE CHECK 14, as a test rather than a log grep. Three contenders, one winner.
+        // SINGLE-ACTIVE-SCHEDULER, as a test rather than a log grep. Three contenders, one winner.
         // With a naive Timer instead of this, all three would run the job.
         string lease = $"election-{Guid.CreateVersion7():N}";
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;

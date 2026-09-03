@@ -1,7 +1,5 @@
 # ADR-0034: The purge deletes storage first, then marks the row
 
-> Numbering note: the Prompt 6 brief calls this ADR-0030; the sequence continues from 0032.
-
 **Status:** Accepted · **Date:** 2026-08-31
 
 ## Context

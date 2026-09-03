@@ -7,11 +7,11 @@ namespace StatementDelivery.ServiceDefaults.Logging;
 /// </summary>
 /// <remarks>
 /// <para>
-/// THE TOKEN NOW EXISTS, AND THESE RULES HAVE BEEN VERIFIED AGAINST IT. They were written in Prompt
-/// 1, before there was anything to redact - redaction that arrives after the feature is redaction
-/// that already leaked, into a log store with a retention period measured in months. Prompt 3 was
-/// the moment the claim had to be turned into evidence, because a rule that matches nothing looks
-/// exactly like a rule that works.
+/// THE TOKEN NOW EXISTS, AND THESE RULES HAVE BEEN VERIFIED AGAINST IT. They were written up
+/// front, before there was anything to redact - redaction that arrives after the feature is
+/// redaction that already leaked, into a log store with a retention period measured in months.
+/// Adding the download token was the moment the claim had to be turned into evidence, because a
+/// rule that matches nothing looks exactly like a rule that works.
 /// </para>
 /// <para>
 /// Verified against the real signals the redemption path produces, not against invented names:
@@ -54,8 +54,8 @@ public static partial class SensitiveDataRedactor
     /// </remarks>
     public const string RedactedMarker = "[REDACTED]";
 
-    // "secret" and "plaintext" were added in Prompt 3 alongside TokenSecret: the type's own name is
-    // the most likely thing to end up as an attribute key when somebody logs one by accident.
+    // "secret" and "plaintext" were added alongside TokenSecret: the type's own name is the most
+    // likely thing to end up as an attribute key when somebody logs one by accident.
     private static readonly string[] SensitiveNames =
         ["token", "dek", "kek", "password", "secret", "plaintext"];
     private static readonly char[] NameSeparators = ['.', '_', ':', '-', '/'];

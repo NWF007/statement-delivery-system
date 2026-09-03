@@ -17,8 +17,8 @@ namespace StatementDelivery.ServiceDefaults.Logging;
 /// <para>
 /// This processor covers the OTLP pipeline ONLY - it sees records on their way to an exporter and
 /// nothing else. The console sink is a separate provider and is covered by
-/// <see cref="RedactingConsoleFormatter"/>, which was added in Prompt 3 for exactly this reason:
-/// with a real token in existence, "the console is only a development convenience" stopped being an
+/// <see cref="RedactingConsoleFormatter"/>, which was added once a real token existed, for
+/// exactly this reason: "the console is only a development convenience" stopped being an
 /// acceptable answer. Both paths are asserted in tests/SecurityTests.
 /// </para>
 /// </remarks>

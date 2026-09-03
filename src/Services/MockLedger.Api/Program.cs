@@ -70,7 +70,7 @@ app.MapGet(
         }
 
         // 4. Poison: a 200 whose body will not deserialise. The worker's parse failure is the
-        //    quarantine path under test in Part G.
+        //    quarantine path the resilience tests exercise.
         if (faults.Current.PoisonAccountIds.Contains(accountId))
         {
             return Results.Text(FaultInjector.PoisonPayload(accountId), "application/json");

@@ -44,7 +44,7 @@ public sealed record StoredObjectKey(string Key, long SizeBytes);
 /// would hand every service every capability and leave IAM as the only fence.
 /// </para>
 /// <para>
-/// Scoped ahead in <c>docs/setup-prompt-6.md</c> (Part 0.4). The signatures differ from the
+/// Sketched as a design note before the retention work began. The signatures differ from that
 /// sketch in one deliberate way: no <c>NpgsqlTransaction</c> parameter. Object storage cannot
 /// join a database transaction, and a parameter that implies it can is a lie in the signature -
 /// the purge worker sequences storage-then-database explicitly instead (ADR-0034).

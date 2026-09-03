@@ -145,7 +145,7 @@ public sealed class DeliveryApiFactory : WebApplicationFactory<Delivery.Api.Conf
 
                 ["Audit:ChainCount"] = "16",
 
-                // Prompt 6: the API registers AddObjectStorage for the legal-hold admin surface,
+                // The API registers AddObjectStorage for the legal-hold admin surface,
                 // and ObjectStorageOptions validates on start. The client is lazy - nothing here
                 // contacts this endpoint unless a test drives the legal-hold endpoints, and those
                 // tests substitute IStatementObjectAdmin or point at the MinIO fixture.

@@ -2,14 +2,11 @@
 
 **Status:** Accepted · **Date:** 2026-08-30
 
-> Numbering note: the Prompt 5 brief called this ADR-0024. That number (and 0025) was taken by
-> the audit-remediation ADRs; the Prompt 5 set ships as 0026–0030.
-
 ## Context
 
 The batch subsystem fans 30 million render items out to up to 400 workers. Something must hand
 each item to exactly one worker, survive worker crashes, and resume mid-run. The reflex answer is
-a broker — Kafka, RabbitMQ, SQS. The compose stack has none, and this prompt does not add one.
+a broker — Kafka, RabbitMQ, SQS. The compose stack has none, and this design does not add one.
 
 ## The arithmetic
 

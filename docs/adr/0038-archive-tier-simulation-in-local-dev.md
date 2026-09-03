@@ -1,7 +1,5 @@
 # ADR-0038: The archive tier is simulated locally, and labelled as a simulation
 
-> Numbering note: the Prompt 6 brief calls this ADR-0034; the sequence continues from 0032.
-
 **Status:** Accepted · **Date:** 2026-08-31
 
 ## Context
@@ -14,8 +12,8 @@ as the real thing is not.
 ## What is REAL in local development
 
 - The database lifecycle: `status = ARCHIVED`, `storage_tier = GLACIER` (V006's tier vocabulary;
-  the brief's "COLD" maps to it), audited `STATEMENT_ARCHIVED`, all driven by the daily
-  leader-elected archive pass.
+  GLACIER is this schema's name for a "COLD" tier), audited `STATEMENT_ARCHIVED`, all driven by
+  the daily leader-elected archive pass.
 - The asynchronous restore contract: `POST .../restore` answers 202 with an estimate; a worker
   job completes the request; `statement.restored` publishes through the transactional outbox;
   restored copies **expire** (`Retention:RestoredCopyHours`), after which the statement is cold

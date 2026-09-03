@@ -79,8 +79,8 @@ Reusing one key across objects is safe here for a specific reason worth stating,
 - `customer_key` gains `cohort_id`, `wrapped_cek` and `cek_algorithm` (V013). A `CHECK` enforces that an `ACTIVE` row has both material and a cohort, and that wrapped material is at least 40 bytes — a raw 32-byte key cannot satisfy it.
 - `app_generation` is the only role that may `INSERT` a customer key. Download reads them; retention destroys them; nobody updates them outside rotation.
 - The CEK insert is `ON CONFLICT DO NOTHING` with a `RETURNING` clause, because 400 replicas can reach a keyless customer simultaneously. Losers discard their candidate and re-read. A customer with two CEKs is a customer half of whose statements survive erasure.
-- `DestroyCekAsync` throws `NotImplementedException` with a `TODO(prompt6)`. Erasure is irreversible and the code that decides *whether it is lawful yet* — retention expired, no legal hold, audited — does not exist. Building the destructive half first is how a system ends up able to erase data it was required to keep.
-  *(Update, 2026-08-31: Prompt 6 built exactly that machinery — the retention decision engine, the cooling-off window, the re-evaluating executor — and implemented `DestroyCekAsync` with it. See ADR-0035.)*
+- `DestroyCekAsync` shipped throwing `NotImplementedException` behind a deliberate TODO. Erasure is irreversible and the code that decides *whether it is lawful yet* — retention expired, no legal hold, audited — did not exist. Building the destructive half first is how a system ends up able to erase data it was required to keep.
+  *(Update, 2026-08-31: that machinery now exists — the retention decision engine, the cooling-off window, the re-evaluating executor — and `DestroyCekAsync` is implemented on top of it. See ADR-0035.)*
 - KMS key rotation is out of scope. `kek_id` is stored per object precisely so rotation does not have to rewrite history, and the cohort index (V014) exists so a cohort can be walked when it does.
 
 ## Revisit when

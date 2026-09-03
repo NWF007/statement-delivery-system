@@ -79,10 +79,10 @@ public sealed class LegalHoldRepository
         """;
 
     // EVERY hold affecting the customer, both scopes - the erasure gate. This is the query the
-    // audit's CRITICAL lived in: before V021 a statement-scoped hold carried no customer_id and
-    // was invisible here, so a hold on one statement did not block the erasure that would
-    // destroy that statement's readability. The data model now guarantees this single indexed
-    // predicate is complete (ADR-0040).
+    // most serious retention defect to date lived in: before V021 a statement-scoped hold carried
+    // no customer_id and was invisible here, so a hold on one statement did not block the erasure
+    // that would destroy that statement's readability. The data model now guarantees this single
+    // indexed predicate is complete (ADR-0040).
     private const string ActiveForCustomerSql = """
         SELECT case_reference
           FROM legal_hold

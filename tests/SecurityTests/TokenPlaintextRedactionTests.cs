@@ -230,9 +230,9 @@ public sealed class TokenPlaintextRedactionTests
     [Fact]
     public void SensitiveNames_CoverTheTypesThatNowExist()
     {
-        // Rules written in Prompt 1 against data that did not yet exist, re-verified against the
-        // real names Prompt 3 produces. A rule that matches nothing looks exactly like one that
-        // works, and this is the difference.
+        // Rules written before the data they guard existed, re-verified against the real names the
+        // download-token and key code actually produce. A rule that matches nothing looks exactly
+        // like one that works, and this is the difference.
         foreach (string name in new[]
         {
             "token", "Token", "download.token", "download_token", "url-token",

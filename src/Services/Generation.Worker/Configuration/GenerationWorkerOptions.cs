@@ -113,7 +113,7 @@ public static class GenerationWorkerExtensions
     /// Binds options and registers the four hosted loops: renderer, orchestrator, reaper, relay.
     /// </summary>
     /// <remarks>
-    /// ONE PROCESS, TWO ROLES - the reason the lease abstraction from Prompt 1 exists. The
+    /// ONE PROCESS, TWO ROLES - the reason the shared lease abstraction exists at all. The
     /// RENDER loop runs on every replica, always. The ORCHESTRATOR, REAPER and RELAY loops run
     /// on every replica too, but each gates itself behind an <c>ILeaseManager</c> lease, so
     /// exactly one replica at a time actually plans, monitors, reaps or relays. Scale to 400

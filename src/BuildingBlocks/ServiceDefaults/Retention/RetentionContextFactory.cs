@@ -9,10 +9,10 @@ namespace StatementDelivery.ServiceDefaults.Retention;
 /// <remarks>
 /// <para>
 /// ADR-0041's rule made concrete. The decision engine is exhaustively tested — 32 rows, every
-/// input combination — and the Prompt 6 CRITICAL lived one layer up anyway, in three hand-rolled
-/// context constructions that each mapped the world onto the engine's inputs slightly
-/// differently (one dropped statement-scoped holds; one dropped the store layer entirely). The
-/// enumeration stopped exactly where the real-world variation started.
+/// input combination — and the most serious retention defect found to date lived one layer up
+/// anyway, in three hand-rolled context constructions that each mapped the world onto the
+/// engine's inputs slightly differently (one dropped statement-scoped holds; one dropped the
+/// store layer entirely). The enumeration stopped exactly where the real-world variation started.
 /// </para>
 /// <para>
 /// So the mapping is now one pure function with its own exhaustive matrix
@@ -51,8 +51,8 @@ public static class RetentionContextFactory
             // carries no lock, and an unconsulted store carries no opinion at all.
             ObjectLockRetainUntil: objectInfo is { Exists: true } ? objectInfo.RetainUntil : null,
 
-            // EITHER layer blocks - that single expression is what the audit found duplicated
-            // and diverging across the purge and erasure paths.
+            // EITHER layer blocks - one expression, in one place. Hand-rolled copies of it had
+            // duplicated and then diverged across the purge and erasure paths.
             HasActiveLegalHold: holds.IsHeld,
             LegalHoldCaseReference: holds.EffectiveCaseReference,
             CustomerKeyDestroyed: customerKeyDestroyed,

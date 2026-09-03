@@ -88,9 +88,9 @@ public readonly record struct ContentBinding(Guid StatementId, Guid CustomerId, 
 /// </summary>
 /// <remarks>
 /// <para>
-/// THIS VALUE OBJECT GREW IN PROMPT 4; THE PORT AROUND IT DID NOT. <see cref="Envelope"/> is new,
-/// and <c>IStatementContentStore</c> - the seam the encrypting adapter went behind - is unchanged,
-/// as is every line of request handling in the download gateway.
+/// THIS VALUE OBJECT GREW WITH ENCRYPTION; THE PORT AROUND IT DID NOT. <see cref="Envelope"/> is
+/// new, and <c>IStatementContentStore</c> - the seam the encrypting adapter went behind - is
+/// unchanged, as is every line of request handling in the download gateway.
 /// </para>
 /// <para>
 /// That distinction is worth being precise about, because "zero changes" would be a false claim and
