@@ -316,7 +316,7 @@
           ]
         },
         {
-          "name": "List statements \u2014 next page",
+          "name": "List statements — next page",
           "request": {
             "method": "GET",
             "header": [],
@@ -386,7 +386,7 @@
           ]
         },
         {
-          "name": "List \u2014 missing from/to is 400",
+          "name": "List — missing from/to is 400",
           "request": {
             "method": "GET",
             "header": [],
@@ -443,7 +443,7 @@
           ]
         },
         {
-          "name": "List \u2014 range over 84 months is 400",
+          "name": "List — range over 84 months is 400",
           "request": {
             "method": "GET",
             "header": [],
@@ -569,7 +569,7 @@
           ]
         },
         {
-          "name": "Get one \u2014 missing period is 400",
+          "name": "Get one — missing period is 400",
           "request": {
             "method": "GET",
             "header": [],
@@ -621,7 +621,7 @@
       ]
     },
     {
-      "name": "02 Download \u2014 happy path",
+      "name": "02 Download — happy path",
       "description": "Issue a single-use link, redeem it, and prove the PDF plus every security header. MUST run before folder 03, which replays this token. The redeemed URL is cleared immediately after use (see README, 'single-use').",
       "item": [
         {
@@ -742,7 +742,7 @@
       ]
     },
     {
-      "name": "03 Download \u2014 denials",
+      "name": "03 Download — denials",
       "description": "Every way a redemption legitimately fails, and the property that matters most: the denials are byte-identical. A reviewer running this folder SEES the uniform denial rather than reading about it. Runs after 02 so the replay case has a spent token to reuse.",
       "item": [
         {
@@ -995,7 +995,7 @@
           ]
         },
         {
-          "name": "\u2605 All denials are byte-identical",
+          "name": "★ All denials are byte-identical",
           "request": {
             "method": "GET",
             "header": [],
@@ -1087,7 +1087,7 @@
           ]
         },
         {
-          "name": "Verify \u2014 customer scope is 403",
+          "name": "Verify — customer scope is 403",
           "request": {
             "method": "GET",
             "header": [],
@@ -1137,7 +1137,7 @@
           ]
         },
         {
-          "name": "Verify \u2014 no token is 401",
+          "name": "Verify — no token is 401",
           "request": {
             "method": "GET",
             "header": [],
@@ -1169,7 +1169,7 @@
       ]
     },
     {
-      "name": "05 Compliance \u2014 legal hold",
+      "name": "05 Compliance — legal hold",
       "description": "Place holds at both scopes (statement and customer), list active holds, release. Holds are what block erasure in folder 06.",
       "item": [
         {
@@ -1299,14 +1299,18 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('201', () => pm.response.to.have.status(201));"
+                  "pm.test('201', () => pm.response.to.have.status(201));",
+                  "const b = pm.response.json();",
+                  "pm.test('returns holdId', () => pm.expect(b).to.have.property('holdId'));",
+                  "// Kept ACTIVE into folder 06, which proves the LEGAL_HOLD erasure block against it, then releases it.",
+                  "if (b.holdId) pm.environment.set('customerHoldId', b.holdId);"
                 ]
               }
             }
           ]
         },
         {
-          "name": "Place hold \u2014 missing caseReference is 400",
+          "name": "Place hold — missing caseReference is 400",
           "request": {
             "method": "POST",
             "header": [
@@ -1371,7 +1375,7 @@
           ]
         },
         {
-          "name": "Place hold \u2014 customer scope is 403",
+          "name": "Place hold — customer scope is 403",
           "request": {
             "method": "POST",
             "header": [
@@ -1486,7 +1490,17 @@
                 "exec": [
                   "pm.test('200', () => pm.response.to.have.status(200));",
                   "const b = pm.response.json();",
-                  "pm.test('items is an array', () => pm.expect(b.items || b).to.be.an('array'));"
+                  "// Contract shape (OpenAPI): { holds: [...], cursor } - not { items }.",
+                  "pm.test('holds is an array', () => pm.expect(b.holds).to.be.an('array'));",
+                  "pm.test('carries a cursor field', () => pm.expect(b).to.have.property('cursor'));",
+                  "const ids = b.holds.map(h => h.id);",
+                  "pm.test('the statement-scoped hold is listed', () => pm.expect(ids).to.include(pm.environment.get('holdId')));",
+                  "pm.test('the customer-scoped hold is listed', () => pm.expect(ids).to.include(pm.environment.get('customerHoldId')));",
+                  "pm.test('both scopes present', () => {",
+                  "  const mine = b.holds.filter(h => ids.includes(h.id));",
+                  "  pm.expect(mine.some(h => h.statementId)).to.be.true;",
+                  "  pm.expect(mine.some(h => !h.statementId && h.customerId)).to.be.true;",
+                  "});"
                 ]
               }
             }
@@ -1559,7 +1573,7 @@
       ]
     },
     {
-      "name": "06 Compliance \u2014 erasure",
+      "name": "06 Compliance — erasure",
       "description": "Crypto-erasure lifecycle. Assertions are on the PAYLOAD - a bare 409 passes a status check and still fails the requirement, so the citations (reason, caseReference, basis, retainUntil) are asserted explicitly. DPO scope required.",
       "item": [
         {
@@ -1621,24 +1635,151 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('409 or 202 (depends on holds/retention state)',",
-                  "  () => pm.expect([202,409]).to.include(pm.response.code));",
-                  "if (pm.response.code === 409) {",
-                  "  const b = pm.response.json();",
-                  "  pm.test('409 names a reason', () => pm.expect(b.reason).to.be.oneOf(['LEGAL_HOLD','STATUTORY_RETENTION']));",
-                  "  if (b.reason === 'LEGAL_HOLD') pm.test('cites caseReference', () => pm.expect(b.caseReference).to.be.a('string').and.not.empty);",
-                  "  if (b.reason === 'STATUTORY_RETENTION') {",
-                  "    pm.test('cites basis', () => pm.expect(b.basis).to.be.a('string').and.not.empty);",
-                  "    pm.test('cites retainUntil (a date)', () => pm.expect(String(b.retainUntil)).to.match(/^\\d{4}-\\d{2}-\\d{2}/));",
-                  "  }",
-                  "}"
+                  "pm.test('409', () => pm.response.to.have.status(409));",
+                  "const b = pm.response.json();",
+                  "pm.test('reason is LEGAL_HOLD', () => pm.expect(b.reason).to.eql('LEGAL_HOLD'));",
+                  "pm.test('cites caseReference', () => pm.expect(b.caseReference).to.be.a('string').and.not.empty);"
                 ]
               }
             }
           ]
         },
         {
-          "name": "Erasure \u2014 missing reason/reference is 400",
+          "name": "Release the customer hold (staff)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/legal-holds/{{customerHoldId}}",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "legal-holds",
+                "{{customerHoldId}}"
+              ]
+            },
+            "description": "Releases the customer-scoped hold placed in 05 so the next request sees retention alone, and so a second run starts clean.",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "Authorization",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "Bearer {{jwtStaff}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"releaseReason\": \"review complete\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 or 204', () => pm.expect([200,204]).to.include(pm.response.code));",
+                  "pm.environment.unset('customerHoldId');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Erasure blocked inside statutory retention (dpo)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/customers/{{customerAId}}/erasure",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "customers",
+                "{{customerAId}}",
+                "erasure"
+              ]
+            },
+            "description": "No hold is active any more, so the only thing standing between the DPO and erasure is the statute. A bare 409 would pass a status assertion and fail the requirement, so the basis and the date are asserted.",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "Authorization",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "Bearer {{jwtDpo}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"POPIA s24 data-subject request\",\n  \"requestReference\": \"DSR-POSTMAN-01\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409', () => pm.response.to.have.status(409));",
+                  "const b = pm.response.json();",
+                  "pm.test('reason is STATUTORY_RETENTION', () => pm.expect(b.reason).to.eql('STATUTORY_RETENTION'));",
+                  "pm.test('409 cites the statutory basis', () => pm.expect(b.basis).to.be.a('string').and.not.empty);",
+                  "pm.test('409 cites retainUntil (a date)', () => pm.expect(String(b.retainUntil)).to.match(/^\\d{4}-\\d{2}-\\d{2}/));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Erasure — missing reason/reference is 400",
           "request": {
             "method": "POST",
             "header": [
@@ -1703,7 +1844,7 @@
           ]
         },
         {
-          "name": "Erasure \u2014 staff (non-DPO) scope is 403",
+          "name": "Erasure — staff (non-DPO) scope is 403",
           "request": {
             "method": "POST",
             "header": [
@@ -1768,7 +1909,7 @@
           ]
         },
         {
-          "name": "Erasure \u2014 customer scope is 403",
+          "name": "Erasure — customer scope is 403",
           "request": {
             "method": "POST",
             "header": [
@@ -2018,7 +2159,12 @@
                   "pm.test('202 or 409', () => pm.expect([202,409]).to.include(pm.response.code));",
                   "if (pm.response.code === 202) {",
                   "  const b = pm.response.json();",
+                  "  pm.test('202 carries restoreId', () => pm.expect(b).to.have.property('restoreId'));",
                   "  if (b.restoreId) pm.environment.set('restoreId', b.restoreId);",
+                  "} else {",
+                  "  // Not archived (409): nothing to poll - see README, Known limitations.",
+                  "  pm.environment.unset('restoreId');",
+                  "  pm.execution.setNextRequest('Create statement run (staff)');",
                   "}"
                 ]
               }
@@ -2162,7 +2308,7 @@
           ]
         },
         {
-          "name": "Create same run again \u2014 idempotent",
+          "name": "Create same run again — idempotent",
           "request": {
             "method": "POST",
             "header": [
@@ -2439,7 +2585,11 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('202 or 200', () => pm.expect([200,202]).to.include(pm.response.code));"
+                  "pm.test('202 or 200', () => pm.expect([200,202]).to.include(pm.response.code));",
+                  "const b = pm.response.json();",
+                  "pm.test('returns runId', () => pm.expect(b).to.have.property('runId'));",
+                  "if (b.runId) pm.environment.set('reconciliationRunId', b.runId);",
+                  "pm.environment.set('reconciliationPolls', 0);"
                 ]
               }
             }
@@ -2462,7 +2612,7 @@
                 "latest"
               ]
             },
-            "description": "",
+            "description": "/latest is the most recent COMPLETED run, and the retention worker picks a requested run up on its own cadence (~60 s), so this request re-queues itself until the run triggered above is the one it is reading. Reading it once would report the PREVIOUS run.",
             "auth": {
               "type": "apikey",
               "apikey": [
@@ -2491,9 +2641,19 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('200 or 404 (none yet)', () => pm.expect([200,404]).to.include(pm.response.code));",
-                  "if (pm.response.code === 200) {",
-                  "  const b = pm.response.json();",
+                  "const want = pm.environment.get('reconciliationRunId');",
+                  "const b = pm.response.code === 200 ? pm.response.json() : {};",
+                  "const n = (pm.environment.get('reconciliationPolls') || 0) * 1 + 1;",
+                  "pm.environment.set('reconciliationPolls', n);",
+                  "if (want && b.runId !== want && n < 20) {",
+                  "  // Not our run yet: wait for the worker, then read again (bounded: 20 x 5 s).",
+                  "  setTimeout(() => {}, 5000);",
+                  "  pm.execution.setNextRequest('Latest reconciliation');",
+                  "} else {",
+                  "  pm.test('latest is the run triggered above', () => pm.expect(b.runId).to.eql(want));",
                   "  pm.test('zero critical findings', () => pm.expect(b.criticalFindings || 0).to.eql(0));",
+                  "  pm.environment.unset('reconciliationRunId');",
+                  "  pm.environment.unset('reconciliationPolls');",
                   "}"
                 ]
               }
@@ -2871,8 +3031,15 @@
           "  leaks.forEach(re => pm.expect(text, `leak: ${re}`).to.not.match(re));",
           "});",
           "",
+          "// traceId is a promise of Delivery.Api's problem+json errors. Two deliberate exceptions:",
+          "//  - the gateway's 404 is BYTE-IDENTICAL across every denial (ADR-0015/16); a per-request",
+          "//    traceId would make each one distinguishable, so it carries none (folder 03 proves this).",
+          "//  - the erasure 409 is a decision payload ({reason, basis, retainUntil, ...}, application/json),",
+          "//    not a problem document; folder 06 asserts its fields directly.",
           "const ct = pm.response.headers.get('content-type') || '';",
-          "if (pm.response.code >= 400 && ct.includes('json')) {",
+          "const gateway = pm.environment.get('gatewayUrl') || '';",
+          "const isGateway = gateway && pm.request.url.toString().startsWith(gateway);",
+          "if (pm.response.code >= 400 && ct.includes('problem+json') && !isGateway) {",
           "  pm.test('error carries a traceId', function () {",
           "    pm.expect(pm.response.json()).to.have.property('traceId');",
           "  });",

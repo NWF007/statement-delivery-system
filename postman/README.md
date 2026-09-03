@@ -17,7 +17,7 @@ Files:
 
 ```
 postman/
-├── StatementDelivery.postman_collection.json     51 requests, 10 folders
+├── StatementDelivery.postman_collection.json     53 requests, 10 folders
 ├── StatementDelivery.local.postman_environment.json
 └── README.md
 tools/postman/
@@ -93,9 +93,19 @@ Run **top to bottom**. Two ordering facts matter:
 - **Folder 02 must precede folder 03.** `03`'s replay case redeems the *same* token `02` already
   spent, to prove the second redemption fails. `02` deliberately copies its spent URL into a
   `spentUrl` variable for that one case.
+- **Folder 05 leaves the customer-scoped hold ACTIVE on purpose; folder 06 releases it.** 06's
+  first request proves the `LEGAL_HOLD` erasure block against that hold, then releases it, then
+  proves the `STATUTORY_RETENTION` block with no hold in the way. Run 05 without 06 and a hold is
+  left behind — the next full run still passes (it places and lists its own), but
+  `GET /v1/legal-holds?active=true` will show the stragglers.
 - **Folder 07 (restore) self-polls.** Its status request re-queues itself (via
   `pm.execution.setNextRequest`) up to five times, then moves on, so an in-flight restore doesn't
-  hang the run.
+  hang the run. On a stack with no `ARCHIVED` statement the restore request is a 409 and the poll
+  is skipped explicitly (there is no `restoreId` to poll).
+- **Folder 08 (reconciliation) self-polls too.** `/latest` is the most recent *completed* run and
+  the retention worker picks a requested run up on its own ~60 s cadence, so the "latest" request
+  re-reads until the run it just triggered is the one it is looking at (bounded: 20 × 5 s). That
+  is why a full run takes about a minute; the requests themselves take ~5 s.
 
 ## 5. Why download URLs are cleared after use
 
@@ -121,10 +131,10 @@ atomically on first redemption. Three consequences the collection handles on pur
 | **02 Download — happy path** | Issue single-use link → redeem → `%PDF` + every security header (`no-store`, `attachment`, `nosniff`, `no-referrer`) |
 | **03 Download — denials** | Replay, revoked, malformed, wrong-length, unknown, cross-customer — and **★ all denials byte-identical** (the uniform-denial property, live) |
 | **04 Audit** | All 16 chains verify; staff-only scope (customer → 403, no token → 401) |
-| **05 Legal hold** | Both hold scopes placed and listed; missing `caseReference` → 400; released |
-| **06 Erasure** | 409s that **cite their basis** (`LEGAL_HOLD`+`caseReference`, or `STATUTORY_RETENTION`+`basis`+`retainUntil`) asserted on the payload, not just the status; scope gates (staff→403, customer→403); cancel |
+| **05 Legal hold** | Both hold scopes placed and **both listed** (`{ holds, cursor }`); missing `caseReference` → 400; customer scope → 403; the statement hold released (the customer hold is released in 06) |
+| **06 Erasure** | **Both** 409 branches, each asserted on the payload and not just the status: `LEGAL_HOLD` + `caseReference` while 05's customer hold is active, then — hold released — `STATUTORY_RETENTION` + `basis` + `retainUntil`; scope gates (staff→403, customer→403); cancel |
 | **07 Archive & restore** | 409 with a working `restoreEndpoint`; restore → poll → download |
-| **08 Operations** | Run **idempotency** (same period → same `runId`); failures + retry; clean reconciliation |
+| **08 Operations** | Run **idempotency** (same period → same `runId`); failures + retry; reconciliation triggered and **read back once it is that run** — zero critical findings |
 | **09 Security probes** | IDOR resources are **404, never 403**; scope violations; the gateway's deliberate unauthenticated 404 |
 
 Two collection-level scripts run on **every** request: one asserts no internal detail leaks
@@ -156,6 +166,27 @@ alongside the console output.
   worker does this on its schedule, or archive one by hand for the demo).
 - **The uniform-denial assertion (03)** compares whatever denial bodies were captured in that run;
   it needs at least the malformed and unknown cases to have executed against the gateway.
+- **`scripts/seed-demo.sh` leaves rows that fail two of the folders.** Its step 2 (the seed tool)
+  writes statement rows whose `storage_key` points at objects that were never uploaded — right
+  for benchmarks, and the script says so — and step 3 then *adds* generated statements rather
+  than filling those in. Against that dataset: (a) the customer-scoped hold in 05 is a **500**
+  (`NoSuchKey` while setting the object hold on a row with no object), and (b) reconciliation in
+  08 reports one `MISSING_OBJECT` critical per seed-only row. Both are the API telling the truth
+  about the data, not collection bugs. For a clean run, prune the rows that no generation run
+  produced:
+
+  ```sql
+  DELETE FROM statement
+   WHERE id NOT IN (SELECT statement_id FROM statement_run_item WHERE statement_id IS NOT NULL);
+  ```
+
+  The script also needs `python` on PATH for its JSON parsing (steps 3–4); without it, run the
+  seed tool with `Postgres__PrimaryConnectionString` set (see `docs/SCALE.md`) and trigger the
+  run through `POST /v1/statement-runs` by hand.
+- **Customer ids are data.** The pre-request script defaults `customerAId`/`customerBId` to
+  placeholder GUIDs; on a seeded stack pass real ones (`newman ... --env-var customerAId=…
+  --env-var customerBId=…`, or set them in the environment). Both must own at least one
+  *generated* statement in the period folder 00 discovers.
 
 ---
 
@@ -193,5 +224,39 @@ Reported as the brief asked, contract-wins:
 5. **DPO scope requires `staff=true&dpo=true`** on the dev-token mint (see §3). Documented, not a
    defect — but non-obvious, so worth stating.
 
-None of these is a security or correctness defect; items 1–2 are coverage gaps in the OpenAPI
-surface and item 3 is a documentation-annotation gap.
+6. **`POST /v1/statement-runs/{runId}/failures/retry` was a 500 on every call** —
+   `42501: permission denied for table statement_run_item`. V017 granted `app_delivery` a
+   column-scoped UPDATE on `(status, attempts, last_error)`; the retry SQL had since grown to
+   also clear `claimed_at, claimed_by, started_at, finished_at`. The integration suite runs the
+   retry as the superuser, so only a run *as the API's own role* could see it. **Fixed in
+   `V024__statement_run_item_retry_grant.sql`**, which widens the column grant and says why.
+
+7. **`POST /v1/customers/{id}/legal-holds` is a 500 when any of the customer's statements has no
+   object in storage** (`NoSuchKey` from the store while placing the per-object hold; the
+   statement-scoped variant tolerates this). It only bites on seed-tool data — see Known
+   limitations — but a hold that fails half-way leaves some objects held and no DB row, which the
+   code comments accept and reconciliation reports. Worth a decision: skip-and-count, or keep
+   failing loudly.
+
+8. **The gateway's 404 carries no `traceId`, by design.** Every denial is byte-identical (folder
+   03 proves it live), and a per-request `traceId` would make each one distinguishable. The
+   collection's "every error carries a traceId" rule therefore exempts the gateway, and is scoped
+   to `application/problem+json` — the erasure 409 is a decision payload
+   (`{ reason, basis, retainUntil }`, plain JSON) rather than a problem document.
+
+9. **`GET /v1/legal-holds` returns `{ holds: [...], cursor }`**, not `{ items }` as the brief's
+   catalogue convention would suggest. The collection asserts the contract's shape.
+
+10. **A statement run planned against an empty catalogue stays `RUNNING` forever** with
+    `totalItems: 0` — nothing ever transitions it. Harmless on a seeded stack; on a fresh one
+    it wedges the period (create-or-get returns the wedged run) until the row is deleted.
+
+11. **`GET /v1/admin/reconciliation/latest` is the latest *completed* run**, and the worker
+    picks up a requested run on its own cadence (~60 s), so trigger-then-read shows the
+    *previous* run. Folder 08 polls for the run it triggered. A `?runId=` lookup, or a
+    `GET .../reconciliation/{runId}`, would make this a single request.
+
+Item 6 was a correctness defect and is fixed in this change; items 7 and 10 are robustness gaps
+worth a decision; items 1–2 and 8–11 are contract-surface or documentation matters. Two
+consecutive full Newman runs on a seeded stack pass with **0 failed assertions** (217 and 209
+assertions — the counts differ only by how many times 08 had to poll).
