@@ -253,7 +253,7 @@ public sealed class EncryptedStorageTests
     [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]
     public async Task Write_FromNonSeekableStream_RoundTrips()
     {
-        // THE SEAM THE PROMPT 5 AUDIT'S CRITICAL LIVED IN, against a REAL MinIO. The render
+        // THE SEAM THAT CARRIED A CRITICAL DEFECT, against a REAL MinIO. The render
         // pipeline hands the writer a pipe - non-seekable, unmeasurable - and every prior
         // storage test wrote from a seekable MemoryStream, so the branch production takes was
         // the one branch never executed. The unit-level tripwire (ContentWriterSeamTests) runs
@@ -545,10 +545,10 @@ public sealed class EncryptedStorageTests
     [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]
     public async Task PlaintextDek_IsNeverPersisted()
     {
-        // ACCEPTANCE CHECK 49, RUN AGAINST THE DATABASE. A raw AES-256 key is 32 bytes; the wrapping
-        // envelope adds 29. Anything shorter than 40 in wrapped_dek is therefore a plaintext key
-        // somebody has persisted - and V013 also enforces this as a CHECK constraint, so this test
-        // is the belt to that braces.
+        // THE NO-PLAINTEXT-KEY RULE, RUN AGAINST THE DATABASE. A raw AES-256 key is 32 bytes; the
+        // wrapping envelope adds 29. Anything shorter than 40 in wrapped_dek is therefore a
+        // plaintext key somebody has persisted - and V013 also enforces this as a CHECK constraint,
+        // so this test is the belt to that braces.
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
 
         (Guid customer, Guid account, Guid statement, StatementPeriod period) = await SeedCustomerAsync(cancellationToken)

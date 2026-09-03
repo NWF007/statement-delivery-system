@@ -109,7 +109,8 @@ public sealed partial class OrphanSweep
             {
                 // Shard exhausted: advance, wrapping at the end of the cycle. The arithmetic
                 // lives in OrphanShardWalk, derived from StorageKeyScheme - never a local
-                // literal (audit HIGH 2's cause).
+                // literal: a copy that drifted from the scheme once sent this sweep listing
+                // prefixes no writer had ever produced.
                 shard = OrphanShardWalk.Next(shard);
                 token = null;
             }

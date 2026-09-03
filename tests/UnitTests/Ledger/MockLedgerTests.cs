@@ -15,7 +15,7 @@ namespace UnitTests.Ledger;
 /// The mock ledger's contract: deterministic data, honest faults.
 /// </summary>
 /// <remarks>
-/// Hosted with WebApplicationFactory - no Docker - so acceptance check 53 (identical bytes for
+/// Hosted with WebApplicationFactory - no Docker - so the determinism contract (identical bytes for
 /// identical requests) is verified on every build on every machine.
 /// </remarks>
 public sealed class MockLedgerTests
@@ -23,8 +23,8 @@ public sealed class MockLedgerTests
     [Fact]
     public async Task SameAccountAndPeriod_ProducesIdenticalBytes()
     {
-        // Acceptance 53. Byte equality of the raw response, not structural equality of the
-        // parsed model: the renderer's determinism chain starts at these bytes.
+        // Byte equality of the raw response, not structural equality of the parsed model: the
+        // renderer's determinism chain starts at these bytes.
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
         using var factory = new MockLedgerFactory();
         using HttpClient client = factory.CreateClient();

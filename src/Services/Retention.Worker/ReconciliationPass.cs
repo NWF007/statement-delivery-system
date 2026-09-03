@@ -81,7 +81,7 @@ public sealed partial class ReconciliationPass
     /// <returns>True when a run executed.</returns>
     public async Task<bool> RunAsync(CancellationToken cancellationToken)
     {
-        // H1 first: reap runs a dead or cancelled leader left RUNNING, so the queue and
+        // Reap first: runs a dead or cancelled leader left RUNNING, so the queue and
         // GET /latest tell the truth before this pass adds to them.
         int stale = await _repository.ReapStaleRunsAsync(cancellationToken).ConfigureAwait(false);
         if (stale > 0)

@@ -194,7 +194,7 @@ jobs:
           --
           --filter-not-trait "Category=RequiresAws"
 
-      # ACCEPTANCE CHECK 36. Repeated, not run once.
+      # THE CONCURRENCY GUARANTEE, REPEATED RATHER THAN RUN ONCE.
       #
       # A race that fails one time in fifty passes a single run and ships. The atomic consume is the
       # property everything else in this system rests on, so it gets twenty independent runs of

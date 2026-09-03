@@ -225,7 +225,7 @@ public static class DownloadLinkEndpoints
                     statusCode: StatusCodes.Status409Conflict,
                     extensions: new Dictionary<string, object?>(StringComparer.Ordinal)
                     {
-                        // The endpoint Prompt 3's 409 promised, now real (Prompt 6 Part D).
+                        // The restore endpoint this 409 promised from the start, now a real route.
                         ["restoreEndpoint"] = string.Create(
                             CultureInfo.InvariantCulture,
                             $"/v1/statements/{statement.Id.Value:D}/restore?period={statement.Period.Start:O}"),

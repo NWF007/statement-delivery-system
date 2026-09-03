@@ -1,7 +1,5 @@
 # ADR-0039: The orphan sweep reports and never deletes — permanently
 
-> Numbering note: the Prompt 6 brief calls this ADR-0035; the sequence continues from 0032.
-
 **Status:** Accepted · **Date:** 2026-08-31
 
 ## Context

@@ -19,10 +19,11 @@ namespace StatementDelivery.Crypto.Keys;
 /// ⚠ <see cref="RecordBytes"/> IS PART OF THE CONTRACT, NOT AN OPTION. The byte budget used to be
 /// charged from a caller-supplied ESTIMATE at acquire time - and the streaming write path, which
 /// cannot know its length up front, passed zero. The budget silently stopped counting, and a
-/// two-bound safety margin on key reuse quietly became one (the Prompt 5 audit's HIGH 2). Now the
-/// caller settles the REAL plaintext byte count after encrypting; an acquire-time estimate no
-/// longer exists to be zero. A lease disposed without settling logs an ERROR - see
-/// <see cref="Dispose"/> for why it logs rather than throws.
+/// two-bound safety margin on key reuse quietly became one - a high-severity defect. The caller
+/// now settles the REAL plaintext byte count after encrypting; an acquire-time estimate no longer
+/// exists to be zero. A lease disposed without settling logs an ERROR - see <see cref="Dispose"/>
+/// for why it logs rather than throws. KeyHierarchyTests pins both halves: the settle-based budget
+/// and the loud failure when a caller forgets to settle it.
 /// </para>
 /// </remarks>
 public sealed class DataKeyLease : IDisposable
@@ -79,10 +80,10 @@ public sealed class DataKeyLease : IDisposable
     /// <remarks>
     /// LOGS AN ERROR RATHER THAN THROWING, deliberately. A throw here would fire inside `using`
     /// disposal on every failure path - encryption faulted, upload faulted - and REPLACE the real
-    /// exception with a bookkeeping one, which is exactly the error-masking this remediation fixes
-    /// elsewhere. A mid-encryption fault legitimately cannot settle (the count is unknowable), so
-    /// unsettled-on-failure is expected; unsettled-on-SUCCESS is the forgotten-call bug, and the
-    /// error log plus the seam tests are what make it loud.
+    /// exception with a bookkeeping one, which is exactly the error-masking the disposal paths in
+    /// this codebase were reworked to avoid. A mid-encryption fault legitimately cannot settle
+    /// (the count is unknowable), so unsettled-on-failure is expected; unsettled-on-SUCCESS is the
+    /// forgotten-call bug, and the error log plus the seam tests are what make it loud.
     /// </remarks>
     public void Dispose()
     {
@@ -115,8 +116,8 @@ public interface IDataKeyBroker
     /// Drops any cached key material for a customer, wiping it. Called by the erasure executor
     /// after destroying the CEK, so THIS process's cache cannot outlive the key. Other
     /// processes' caches expire on MaxAge - the cross-process gap is documented in
-    /// docs/LIMITATIONS.md, and the database-side write guard (Part G) is what actually closes
-    /// the dangerous path.
+    /// docs/LIMITATIONS.md, and the destroyed-key write guard in the publish UPDATE is what
+    /// actually closes the dangerous path.
     /// </summary>
     /// <param name="customer">The customer.</param>
     void Evict(CustomerId customer);

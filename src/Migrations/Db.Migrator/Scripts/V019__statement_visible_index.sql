@@ -1,10 +1,10 @@
 -- =============================================================================================
 -- V019  The widened customer-list index on statement - THE PARTITIONED-PARENT PROCEDURE.
 --
--- Prompt 6 (E4) widens the customer list: ARCHIVED statements must be listable or the restore
--- flow is unreachable, and PURGED ones must appear - status shown, no download offered. V006's
--- idx_statement_customer_period was partial on AVAILABLE only and the list was its sole
--- consumer, so it is replaced.
+-- The customer list is widened to include ARCHIVED and PURGED statements: ARCHIVED must be
+-- listable or the restore flow is unreachable, and PURGED ones must appear - status shown, no
+-- download offered. V006's idx_statement_customer_period was partial on AVAILABLE only and the
+-- list was its sole consumer, so it is replaced.
 --
 -- ⚠ THE FIRST VERSION OF THIS SCRIPT USED CREATE INDEX CONCURRENTLY ON THE PARENT and failed
 -- with SQLSTATE 0A000 on its very first real execution (CI): PostgreSQL cannot build a

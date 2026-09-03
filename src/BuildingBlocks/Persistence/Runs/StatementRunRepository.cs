@@ -358,10 +358,10 @@ public sealed class StatementRunRepository : IStatementRunRepository
          WHERE id = @runId AND status = @fromStatus;
         """;
 
-    // claimed_by IS IN THE PREDICATE (Prompt 5 audit, LOW 1 - promoted to a real fix here). A
-    // render outliving the stale window can interleave with its reaped-and-reclaimed successor;
-    // without the scope, the original worker could mark DONE a row its successor now owns, and
-    // the two would converge only by tripping the statement version unique constraint.
+    // claimed_by IS IN THE PREDICATE (a design review's low-severity note, promoted to a real fix
+    // here). A render outliving the stale window can interleave with its reaped-and-reclaimed
+    // successor; without the scope, the original worker could mark DONE a row its successor now
+    // owns, and the two would converge only by tripping the statement version unique constraint.
     // Converging by constraint violation is worse than not racing. With the scope, zero rows
     // means exactly one thing - "this claim was reaped from under me" - which the caller reports
     // as generation_stale_completion_total: a non-zero rate says the stale window is shorter
@@ -379,9 +379,9 @@ public sealed class StatementRunRepository : IStatementRunRepository
         """;
 
     // attempts jumps to the ceiling so the claim query never hands this item out again: the
-    // failure is DETERMINISTIC (the customer's key is destroyed or scheduled - Part G), and a
-    // retry would burn a claim to hit the same wall. GREATEST keeps a higher recorded attempt
-    // count intact.
+    // failure is DETERMINISTIC (the customer's key is destroyed or scheduled, so the destroyed-key
+    // write guard refuses the publish every time), and a retry would burn a claim to hit the same
+    // wall. GREATEST keeps a higher recorded attempt count intact.
     private const string FailItemTerminallySql = """
         UPDATE statement_run_item
            SET status = 'FAILED', finished_at = now(), last_error = @error,

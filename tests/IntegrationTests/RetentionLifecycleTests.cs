@@ -29,7 +29,7 @@ using Xunit;
 namespace IntegrationTests;
 
 /// <summary>
-/// Prompt 6's lifecycle, end to end against real PostgreSQL and MinIO: purge under the decision
+/// The retention lifecycle, end to end against real PostgreSQL and MinIO: purge under the decision
 /// engine, legal holds in both layers, crypto-erasure with re-evaluation, restores, and
 /// reconciliation findings.
 /// </summary>
@@ -55,7 +55,7 @@ public sealed class RetentionLifecycleTests
         _minio = minio;
     }
 
-    // ─── Part C: the purge ───────────────────────────────────────────────────────────────────────
+    // ─── the purge ───────────────────────────────────────────────────────────────────────────────
 
     [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]
     public async Task Purge_DeletesStorage_MarksRow_AndRetainsMetadata()
@@ -211,7 +211,7 @@ public sealed class RetentionLifecycleTests
         purged.ShouldBe(1);
     }
 
-    // ─── Part B: legal holds, both layers ────────────────────────────────────────────────────────
+    // ─── legal holds, both layers ────────────────────────────────────────────────────────────────
 
     [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]
     public async Task Hold_PlacedInBothDbAndObjectStore()
@@ -275,12 +275,12 @@ public sealed class RetentionLifecycleTests
         status.ShouldBe("AVAILABLE");
     }
 
-    // ─── Part E: crypto-erasure ──────────────────────────────────────────────────────────────────
+    // ─── crypto-erasure ──────────────────────────────────────────────────────────────────────────
 
     [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]
     public async Task Erasure_Executes_ObjectSurvives_ReadPathDies_AuditPreserved()
     {
-        // Checks 81 and 83's integration variant: THE PAYOFF.
+        // Key destroyed, object survives, read path dies, audit preserved: THE PAYOFF.
         CancellationToken ct = TestContext.Current.CancellationToken;
         Published published = await PublishAsync(ct).ConfigureAwait(true);
 
@@ -347,7 +347,7 @@ public sealed class RetentionLifecycleTests
         /// <summary>A hold on the whole customer (statement_id NULL).</summary>
         Customer,
 
-        /// <summary>A hold on one statement (statement_id set). THE scope the audit's CRITICAL was blind to.</summary>
+        /// <summary>A hold on one statement (statement_id set). THE scope the erasure gate was blind to.</summary>
         Statement,
     }
 
@@ -358,9 +358,9 @@ public sealed class RetentionLifecycleTests
     {
         // A hold placed DURING the cooling-off window must stop the executor: the decision made
         // seven days ago is not trusted. BOTH scopes, because the original version of this test
-        // placed only a customer-scoped hold and thereby encoded the audit's CRITICAL - the
-        // statement-scoped case was the one erasure could not see. This is the test that should
-        // have existed; against the pre-V021 code its Statement row goes red.
+        // placed only a customer-scoped hold and so encoded the very defect it should have
+        // caught - the statement-scoped case was the one erasure could not see. This is the test
+        // that should have existed; against the pre-V021 code its Statement row goes red.
         CancellationToken ct = TestContext.Current.CancellationToken;
         Published published = await PublishAsync(ct).ConfigureAwait(true);
 
@@ -431,7 +431,7 @@ public sealed class RetentionLifecycleTests
         keyStatus.ShouldBe("ACTIVE", "cancellation must defuse the key row, not just the request");
     }
 
-    // ─── Part D: restore ─────────────────────────────────────────────────────────────────────────
+    // ─── restore ─────────────────────────────────────────────────────────────────────────────────
 
     [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]
     public async Task Restore_Completes_PublishesEvent_AndAdmitsTheDownloadPath()
@@ -483,7 +483,7 @@ public sealed class RetentionLifecycleTests
         events.ShouldBe(1);
     }
 
-    // ─── Part G: reconciliation ──────────────────────────────────────────────────────────────────
+    // ─── reconciliation ──────────────────────────────────────────────────────────────────────────
 
     [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]
     public async Task Reconciliation_DetectsMissingObject_AndLegalHoldDrift()
@@ -557,10 +557,11 @@ public sealed class RetentionLifecycleTests
     [InlineData(HoldScope.Customer)]
     public async Task Erasure_BlockedBy_Hold(HoldScope scope)
     {
-        // Erasure_BlockedBy_StatementScopedHold - THE CRITICAL - and its customer-scoped
-        // regression twin, at the API evaluation layer: a hold on ONE statement must block the
-        // erasure of the WHOLE customer, because destroying the CEK destroys that statement's
-        // readability. Before V021, the Statement row of this theory schedules the erasure.
+        // Erasure_BlockedBy_StatementScopedHold - the scope the erasure gate missed - and its
+        // customer-scoped regression twin, at the API evaluation layer: a hold on ONE
+        // statement must block the erasure of the WHOLE customer, because destroying the CEK
+        // destroys that statement's readability. Before V021, the Statement row of this theory
+        // schedules the erasure.
         CancellationToken ct = TestContext.Current.CancellationToken;
         Published published = await PublishAsync(ct).ConfigureAwait(true);
 
@@ -578,9 +579,9 @@ public sealed class RetentionLifecycleTests
     [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]
     public async Task Erasure_BlockedBy_StoreOnlyHold()
     {
-        // Part B (audit HIGH 1). Hold placement is storage-first, so its designed crash residue
-        // is a store hold with no database row. That residue blocked purge and NOT erasure; now
-        // both destructive paths share one resolver, and the executor must refuse.
+        // The store-only hold gap. Hold placement is storage-first, so its designed crash
+        // residue is a store hold with no database row. That residue blocked purge and NOT
+        // erasure; now both destructive paths share one resolver, and the executor must refuse.
         CancellationToken ct = TestContext.Current.CancellationToken;
         Published published = await PublishAsync(ct).ConfigureAwait(true);
 
@@ -613,8 +614,8 @@ public sealed class RetentionLifecycleTests
     [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]
     public async Task Purge_BlockedBy_CustomerScopedHold()
     {
-        // The reverse gap named by the remediation: the per-statement purge gate must see a
-        // hold placed on the whole customer.
+        // The mirror image of the statement-scoped hold gap: the per-statement purge gate must
+        // see a hold placed on the whole customer.
         CancellationToken ct = TestContext.Current.CancellationToken;
         Published published = await PublishAsync(ct).ConfigureAwait(true);
         await BackdateRetainUntilAsync(published, ct).ConfigureAwait(true);
@@ -733,10 +734,10 @@ public sealed class RetentionLifecycleTests
     [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]
     public async Task Generation_ForErasedCustomer_IsRejected_EvenWithWarmCache()
     {
-        // Part G. The dangerous sequence, end to end: the key is DESTROYED in the database, but
-        // a store with a WARM cached CEK will happily encrypt and upload - that is the window.
-        // What must close it is the DATABASE-side publish guard, in the same transaction as the
-        // publish itself.
+        // The destroyed-key write guard. The dangerous sequence, end to end: the key is
+        // DESTROYED in the database, but a store with a WARM cached CEK will happily encrypt and
+        // upload - that is the window. What must close it is the DATABASE-side publish guard, in
+        // the same transaction as the publish itself.
         CancellationToken ct = TestContext.Current.CancellationToken;
         Published published = await PublishAsync(ct).ConfigureAwait(true);
 
@@ -870,7 +871,7 @@ public sealed class RetentionLifecycleTests
         }
     }
 
-    // ─── Part F: the orphan sweep ────────────────────────────────────────────────────────────────
+    // ─── the orphan sweep ────────────────────────────────────────────────────────────────────────
 
     [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]
     public async Task OrphanSweep_FindsObjectAtProductionKeyShape()
@@ -879,8 +880,8 @@ public sealed class RetentionLifecycleTests
 
         // An object nothing references: the write-failure leak the sweep exists to find. The
         // key comes from the PRODUCTION constructor - the first version of this test planted a
-        // hand-built two-hex key no writer produces and passed while the sweep was blind to
-        // every real object (audit HIGH 2; the convenient-shape trap ADR-0032 bans).
+        // hand-built two-hex key no writer produces and passed while the sweep was blind to every
+        // real object - the shard-prefix width defect, and the convenient-shape trap ADR-0032 bans.
         string orphanKey = StorageKeyScheme.KeyFor(
             new StatementId(Guid.CreateVersion7()),
             new AccountId(Guid.CreateVersion7()),
@@ -1178,7 +1179,8 @@ public sealed class RetentionLifecycleTests
 
     // Rows are built the way the ENDPOINTS build them post-V021: customer_id ALWAYS set, scope
     // expressed by statement_id alone. A hand-rolled null-customer statement hold here would
-    // re-create the exact row shape the CRITICAL depended on - and the database now rejects it.
+    // re-create the exact row shape that made a statement-scoped hold invisible to the erasure
+    // gate - and the database now rejects it.
     private static async Task PlaceHoldAsync(
         Harness harness, Published published, HoldScope scope, string caseReference, CancellationToken ct)
     {

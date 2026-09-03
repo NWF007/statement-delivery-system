@@ -53,7 +53,7 @@ public sealed class StatementResponseTests
                     "GLACIER",
                     91_234,
 
-                    // POPULATED SINCE PROMPT 4, and the fixture is worth less without it. A
+                    // POPULATED SINCE CRYPTO LANDED, and the fixture is worth less without it. A
                     // "fully populated" statement whose Envelope was null meant the forbidden-name
                     // list below covered wrappedDek, kekId and contentSha256 while no such value
                     // was ever serialised - the assertion passed over an empty set. These values are

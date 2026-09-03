@@ -16,7 +16,8 @@ namespace StatementDelivery.Persistence.Uow;
 /// the audit write fail silently has defeated the whole subsystem.
 /// </para>
 /// <para>
-/// ⚠ THIS PARAGRAPH WAS FALSE FROM PROMPT 2 UNTIL 2026-08-30, AND NOTHING CAUGHT IT.
+/// ⚠ THIS PARAGRAPH WAS FALSE FROM THE DAY THIS INTERFACE WAS WRITTEN UNTIL 2026-08-30, AND
+/// NOTHING CAUGHT IT.
 ///
 /// A unit of work cannot make it true on its own: it opens a transaction and runs a delegate, and
 /// whether the audit append is inside that delegate is entirely up to the caller. Every caller put

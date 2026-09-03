@@ -30,18 +30,18 @@ public sealed class StatementWriteRepository : IStatementWriteRepository
     // row consistent for any reader that sees it.
     //
     // iv AND auth_tag ARE SET TO NULL ON PURPOSE. V006 created them expecting one-shot GCM per
-    // object; the framed format that shipped in Prompt 4 gives every frame its own nonce and its
+    // object; the framed format that superseded it gives every frame its own nonce and its
     // own tag, so there is no single IV to record and nothing truthful to put here. Writing them
     // explicitly rather than omitting them keeps a stale value from a previous generation of the
     // same statement from surviving into a row that no longer means it. See ADR-0019.
     //
-    // THE STATUS PREDICATE IS LOAD-BEARING, added when Prompt 5 wired the first caller (it was
-    // flagged in the Prompts 1-4 audit verification). The domain state machine says AVAILABLE is
-    // reached from PENDING (first render) or FAILED (retry), and that a CORRECTED statement is a
-    // NEW ROW - V006: "what the customer was originally shown remains provable". Without the
-    // predicate, a caller that skips the aggregate could overwrite an already-AVAILABLE row's
-    // envelope in place and every CHECK constraint would smile through it. With it, an illegal
-    // transition matches zero rows and the caller sees rowsAffected == 0 instead of silent damage.
+    // THE STATUS PREDICATE IS LOAD-BEARING, added when the first caller was wired, after a design
+    // review flagged its absence. The domain state machine says AVAILABLE is reached from PENDING
+    // (first render) or FAILED (retry), and that a CORRECTED statement is a NEW ROW - V006: "what
+    // the customer was originally shown remains provable". Without the predicate, a caller that
+    // skips the aggregate could overwrite an already-AVAILABLE row's envelope in place and every
+    // CHECK constraint would smile through it. With it, an illegal transition matches zero rows
+    // and the caller sees rowsAffected == 0 instead of silent damage.
     private const string MarkAvailableSql = """
         UPDATE statement
            SET status         = 'AVAILABLE',
@@ -59,7 +59,7 @@ public sealed class StatementWriteRepository : IStatementWriteRepository
            AND period_start = @periodStart
            AND status IN ('PENDING', 'FAILED')
 
-           -- THE WARM-CACHE WRITE GUARD (remediation Part G). A generation worker's cached CEK
+           -- THE WARM-CACHE WRITE GUARD, enforced in SQL. A generation worker's cached CEK
            -- outlives key destruction by the cache's MaxAge, and cache invalidation across
            -- processes needs a bus this system does not have - but this UPDATE is transactional
            -- and already exists, so the guard lives here: one indexed primary-key probe inside
@@ -184,7 +184,7 @@ public sealed class StatementWriteRepository : IStatementWriteRepository
             if (keyBlocks)
             {
                 throw new CustomerKeyDestroyedException(
-                    $"Statement {id.Value:D}: the customer's key is destroyed or scheduled for destruction; publishing is refused (the Part G write guard).");
+                    $"Statement {id.Value:D}: the customer's key is destroyed or scheduled for destruction; publishing is refused (the destroyed-key write guard).");
             }
         }
 

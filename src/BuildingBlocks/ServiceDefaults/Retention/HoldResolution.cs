@@ -42,12 +42,11 @@ public sealed record HoldState(bool HasDbHold, bool HasStoreHold, string? DbCase
 /// </summary>
 /// <remarks>
 /// <para>
-/// The Prompt 6 audit found the purge feeding the decision engine <c>dbHold || storeHold</c>
-/// while erasure fed it the database alone — the dual-layer defence worked for the reversible
-/// operation and failed for the irreversible one. Two hand-rolled aggregations is how that
-/// happened; this class exists so it cannot happen again, and an architecture test
-/// (RetentionSeamTests) pins that <c>PurgePass</c> and <c>ErasureExecutor</c> depend on this
-/// type and not on <c>LegalHoldRepository</c>.
+/// The purge fed the decision engine <c>dbHold || storeHold</c> while erasure fed it the database
+/// alone — the dual-layer defence worked for the reversible operation and failed for the
+/// irreversible one. Two hand-rolled aggregations is how that happened; this class exists so it
+/// cannot happen again, and an architecture test (RetentionSeamTests) pins that <c>PurgePass</c>
+/// and <c>ErasureExecutor</c> depend on this type and not on <c>LegalHoldRepository</c>.
 /// </para>
 /// <para>
 /// The placement/release/list surface stays on <c>LegalHoldRepository</c> — writing holds is
@@ -119,7 +118,8 @@ public sealed class HoldResolution
         CustomerId customerId, CancellationToken cancellationToken)
     {
         // Since V021 every hold row carries customer_id, so this single indexed predicate sees
-        // BOTH scopes - the query the audit's CRITICAL lived in, now fed by correct data.
+        // BOTH scopes. Before that column existed a statement-scoped hold was invisible to this
+        // query, and the erasure gate it feeds under-reported the customer's holds.
         string? dbCase = await _holds.ActiveCaseReferenceForCustomerAsync(customerId, cancellationToken)
             .ConfigureAwait(false);
 

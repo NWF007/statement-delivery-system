@@ -2,12 +2,13 @@
 -- V017  Statement runs: the batch-generation plan and its work queue.
 --
 -- ⚠ NUMBERING AND SCOPE DEVIATION, RECORDED HERE BECAUSE THIS FILE IS WHERE A READER WILL LOOK.
--- The Prompt 5 brief called this migration V013__run_item_claims.sql and described it as ALTERing
--- a statement_run_item table "created by Prompt 2". Neither premise survives contact with the
--- repository: V013 was taken by customer_key_material in Prompt 4 (the same collision Prompt 4
--- itself hit with V012), and no earlier migration created either run table - a fact recorded in
--- docs/LIMITATIONS.md before this prompt ran. So this script CREATES both tables, claim columns
--- included, as V017. Forward-only, never edited once run, per the standing constraint.
+-- The original design brief called this migration V013__run_item_claims.sql and described it as
+-- ALTERing a statement_run_item table it assumed an earlier migration had already created. Neither
+-- premise survives contact with the repository: V013 was taken by V013__customer_key_material.sql,
+-- which had itself been renumbered off V012 for the same reason, and no earlier migration created
+-- either run table - a fact already recorded in docs/LIMITATIONS.md when this script was written.
+-- So this script CREATES both tables, claim columns included, as V017. Forward-only, never edited
+-- once run, per the standing constraint.
 -- =============================================================================================
 
 -- ---------------------------------------------------------------------------------------------
@@ -80,7 +81,7 @@ CREATE TABLE IF NOT EXISTS statement_run_item
     -- ⚠ INCREMENTED ON CLAIM, NOT ON COMPLETION. A worker that crashes mid-render never reaches
     -- any completion code, so an increment there would let a poison item loop forever. Burning
     -- the attempt at claim time means a crashing item still marches toward the ceiling and gets
-    -- quarantined. The reaper (Part G2) relies on this: it resets status but never attempts.
+    -- quarantined. The stale-claim reaper relies on this: it resets status but never attempts.
     attempts     INT         NOT NULL DEFAULT 0,
 
     -- Message and exception TYPE only. Never a stack trace, and NEVER statement content - this
@@ -135,7 +136,9 @@ CREATE INDEX IF NOT EXISTS idx_run_item_status
 -- Grants.
 --
 -- app_generation plans, claims, renders and records: SELECT, INSERT, UPDATE on both. No DELETE -
--- run history is an operational record; Prompt 6 decides its retention.
+-- run history is an operational record, and how long it is kept has not been decided yet. Until
+-- it is, nothing removes these rows: no application role holds DELETE, as the REVOKEs at the foot
+-- of this script enforce.
 --
 -- ⚠ DEVIATION FROM THE BRIEF, WITH THE REASON IN FULL. The brief says "no other role gets more
 -- than SELECT" - and also requires POST /v1/statement-runs and the failures/retry endpoint on

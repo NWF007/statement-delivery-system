@@ -11,10 +11,10 @@ namespace IntegrationTests;
 /// </summary>
 /// <remarks>
 /// <para>
-/// THE TEST THAT CATCHES THE ENDPOINT SOMEONE ADDS IN SIX MONTHS without thinking about auth
-/// (Prompt 7, A4). It enumerates <see cref="EndpointDataSource"/> on the REAL hosts — every
-/// route that actually exists, not the ones a hand-written table remembers — and fails the
-/// build if an unlisted anonymous endpoint appears.
+/// THE TEST THAT CATCHES THE ENDPOINT SOMEONE ADDS IN SIX MONTHS without thinking about auth.
+/// It enumerates <see cref="EndpointDataSource"/> on the REAL hosts — every route that actually
+/// exists, not the ones a hand-written table remembers — and fails the build if an unlisted
+/// anonymous endpoint appears.
 /// </para>
 /// <para>
 /// DELIBERATELY NOT Docker-gated: host construction resolves routing without touching the

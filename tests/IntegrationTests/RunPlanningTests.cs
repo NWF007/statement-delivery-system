@@ -80,7 +80,8 @@ public sealed class RunPlanningTests
         _ = await PlanAsync(repo, original.Id, period, ct).ConfigureAwait(true);
         _ = await repo.TransitionAsync(original.Id, RunStatus.Running, RunStatus.Completed, ct).ConfigureAwait(true);
 
-        // Re-trigger: SAME run id back, totals untouched, status still COMPLETED. Acceptance 55.
+        // Re-trigger: SAME run id back, totals untouched, status still COMPLETED - the run-creation
+        // idempotency contract.
         StatementRun again = await repo.CreateOrGetAsync(Guid.CreateVersion7(), period, null, ct).ConfigureAwait(true);
 
         again.Id.ShouldBe(original.Id, "re-triggering a period returns the existing run, never a duplicate");

@@ -39,11 +39,11 @@ Three secondary reasons, none of which would justify the decision alone:
 - **No server-side integrations.** S3 Select, Athena and anything else that reads object contents see noise. Acceptable: nothing in this system queries statement bytes, and a bank statement is not analytics data.
 
 ## The port survived; the value object grew
-Prompt 3 defined `IStatementContentStore` with deliberately nothing crypto-shaped in its signature — no key identifier, no IV, no auth tag, no decryption callback. The gateway asks for bytes at a location and receives a stream. The stated test of that design was whether adding encryption would force a change to `Download.Gateway`.
+The storage port `IStatementContentStore` was defined, before any encryption work began, with deliberately nothing crypto-shaped in its signature — no key identifier, no IV, no auth tag, no decryption callback. The gateway asks for bytes at a location and receives a stream. The stated test of that design was whether adding encryption would force a change to `Download.Gateway`.
 
 It did not, and being precise about what that means matters more than the headline:
 
-- **The port is unchanged.** `IStatementContentStore.OpenReadAsync(StorageLocation, CancellationToken)` is byte-for-byte the signature Prompt 3 shipped.
+- **The port is unchanged.** `IStatementContentStore.OpenReadAsync(StorageLocation, CancellationToken)` is byte-for-byte the signature `FileSystemStatementContentStore` was written against.
 - **The value object grew.** `StorageLocation` gained `Envelope`, and `CryptoEnvelope` carries the wrapped DEK, the KEK id, the algorithm, the plaintext digest and the `ContentBinding` the AAD is checked against. The gateway reads four more columns from a row and hands them to the store. That is field plumbing.
 - **Request-handling logic did not change.** No branch, no condition and no ordering in the redemption path moved. The diff over `src/Services/Download.Gateway/` is a DI registration, a `COPY` line in the Dockerfile, a metric, and error handling.
 - **Error handling did change, and it had to.** A decryption failure has no equivalent in a filesystem adapter, so there was no clause to catch one; untranslated it became a 500 with a traceId, which is a visibly different response from the uniform 404 and therefore an oracle. There are now two catches — one at open time and one mid-stream — plus `PrimeAsync`, which authenticates the header before any response header is written so the failure lands where a denial is still expressible.

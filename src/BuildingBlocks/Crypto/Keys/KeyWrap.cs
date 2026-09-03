@@ -14,7 +14,7 @@ namespace StatementDelivery.Crypto.Keys;
 /// </para>
 /// <para>
 /// LAYOUT: <c>version(1) || nonce(12) || ciphertext(n) || tag(16)</c>. For a 32-byte key that is 61
-/// bytes, which is the arithmetic behind acceptance check 49: a raw, unwrapped DEK would be exactly
+/// bytes, which is the arithmetic behind the DEK size check: a raw, unwrapped DEK would be exactly
 /// 32 bytes, so anything shorter than about 40 in a <c>wrapped_dek</c> column is a plaintext key
 /// that somebody has persisted, and a single SQL query finds it.
 /// </para>

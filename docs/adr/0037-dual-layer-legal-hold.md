@@ -1,7 +1,5 @@
 # ADR-0037: Legal holds live in two layers, and storage goes first
 
-> Numbering note: the Prompt 6 brief calls this ADR-0033; the sequence continues from 0032.
-
 **Status:** Accepted · **Date:** 2026-08-31
 
 ## Context

@@ -14,9 +14,10 @@ namespace Delivery.Api.Retention;
 /// <remarks>
 /// <para>
 /// Data-protection-officer scope, above staff, because this schedules the one operation no
-/// backup can undo. The decision comes from the Part A engine, evaluated over the AGGREGATE of
-/// the customer's statements: blocked if ANY is blocked — a hold on one statement holds the
-/// customer's erasure, because destroying the CEK would destroy that statement too.
+/// backup can undo. The decision comes from the shared RetentionDecisionEngine, evaluated over
+/// the AGGREGATE of the customer's statements: blocked if ANY is blocked — a hold on one
+/// statement holds the customer's erasure, because destroying the CEK would destroy that
+/// statement too.
 /// </para>
 /// <para>
 /// The 409s cite their basis (the case reference, or the statute and its date). That is hard

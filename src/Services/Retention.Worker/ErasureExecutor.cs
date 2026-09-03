@@ -32,7 +32,7 @@ namespace Retention.Worker;
 /// THE OBJECTS REMAIN, deliberately. They sit under Compliance-mode locks nothing can lift, and
 /// nothing needs to: ciphertext whose key no longer exists anywhere is indistinguishable from
 /// random bytes. That is what makes crypto-erasure work where deletion cannot (the insight the
-/// whole of Prompt 4 was building towards). Tombstones mark each remnant as lawful so the
+/// whole key hierarchy was built to deliver). Tombstones mark each remnant as lawful so the
 /// orphan sweep does not report the system's own design as a finding.
 /// </para>
 /// </remarks>
@@ -53,9 +53,11 @@ public sealed partial class ErasureExecutor
     /// <summary>Initialises a new instance of the <see cref="ErasureExecutor"/> class.</summary>
     /// <param name="erasures">The request queue.</param>
     /// <param name="statements">Statement-side operations.</param>
-    /// <param name="holds">The shared hold resolver - both layers, one implementation (Part B).</param>
+    /// <param name="holds">The shared hold resolver - both layers, one implementation
+    /// (ADR-0037).</param>
     /// <param name="keyService">The key hierarchy — owns destruction.</param>
-    /// <param name="keyCache">This process's DEK cache, evicted after destruction (Part G).</param>
+    /// <param name="keyCache">This process's DEK cache, evicted after destruction - the
+    /// database-side write guard covers the other processes.</param>
     /// <param name="unitOfWork">Transactions.</param>
     /// <param name="audit">The worker's audit writer.</param>
     /// <param name="metrics">Metrics.</param>
@@ -205,8 +207,9 @@ public sealed partial class ErasureExecutor
             ct).ConfigureAwait(false);
 
         // THIS process's cache must not outlive the key it wrapped. Other processes' caches
-        // expire on MaxAge; the database-side write guard covers that window (Part G), and the
-        // residual read-side gap is documented in docs/LIMITATIONS.md.
+        // expire on MaxAge; the database-side write guard covers that window by refusing any
+        // publish against a destroyed key, and the residual read-side gap is documented in
+        // docs/LIMITATIONS.md.
         _keyCache.Evict(customer);
 
         // STEP 2 — the bookkeeping, one transaction: statements PURGED, tombstones for the

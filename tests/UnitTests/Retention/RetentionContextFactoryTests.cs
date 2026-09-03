@@ -7,7 +7,7 @@ using Xunit;
 namespace UnitTests.Retention;
 
 /// <summary>
-/// The 96-row matrix over CONTEXT CONSTRUCTION — the layer where the Prompt 6 CRITICAL lived.
+/// The 96-row matrix over CONTEXT CONSTRUCTION — the layer where the critical hold defect lived.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -19,9 +19,10 @@ namespace UnitTests.Retention;
 /// final decision.
 /// </para>
 /// <para>
-/// The CRITICAL is one cell: every <c>HoldScope.Statement</c> row requires
-/// <c>HasActiveLegalHold == true</c>. The HIGH is another: every store-hold row requires the
-/// same, with the drift marker as the case reference when no database record exists.
+/// The critical defect is one cell: every <c>HoldScope.Statement</c> row requires
+/// <c>HasActiveLegalHold == true</c>. A second, high-severity one is another cell: every
+/// store-hold row requires the same, with the drift marker as the case reference when no
+/// database record exists.
 /// </para>
 /// </remarks>
 public static class RetentionContextFactoryTests
@@ -35,7 +36,7 @@ public static class RetentionContextFactoryTests
         /// <summary>A customer-scoped hold (statement_id NULL).</summary>
         Customer,
 
-        /// <summary>A statement-scoped hold — the scope the audit's CRITICAL was blind to.</summary>
+        /// <summary>A statement-scoped hold — the scope the critical defect was blind to.</summary>
         Statement,
 
         /// <summary>Both scopes at once.</summary>
@@ -91,8 +92,8 @@ public static class RetentionContextFactoryTests
     {
         // The world, as the resolvers deliver it. Since V021, EVERY database hold — whatever
         // its scope — reaches the resolver's customer predicate, so any scope other than None
-        // means HasDbHold. That sentence is the requirement the CRITICAL violated, and this
-        // mapping is where the matrix encodes it.
+        // means HasDbHold. That sentence is the requirement the critical defect violated, and
+        // this mapping is where the matrix encodes it.
         bool hasDbHold = scope != HoldScope.None;
         var holds = new HoldState(hasDbHold, storeHold, hasDbHold ? CaseRef : null);
         bool destroyed = key == KeyStatus.Destroyed;
@@ -109,7 +110,7 @@ public static class RetentionContextFactoryTests
         // factory's own expressions.
         ctx.HasActiveLegalHold.ShouldBe(
             scope != HoldScope.None || storeHold,
-            "a hold in ANY scope or EITHER layer must reach the engine - the CRITICAL and the HIGH are both this field");
+            "a hold in ANY scope or EITHER layer must reach the engine - both defects were this field");
 
         if (scope != HoldScope.None)
         {

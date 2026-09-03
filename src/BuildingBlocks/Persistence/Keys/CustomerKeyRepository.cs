@@ -15,8 +15,8 @@ namespace StatementDelivery.Persistence.Keys;
 /// the adapter, and it is the only place a wrapped CEK is read from or written to a row.
 /// </para>
 /// <para>
-/// NOTE WHAT IS NOT HERE: no DELETE, and no UPDATE. Destroying key material is Prompt 6's work and
-/// belongs with the code that decides whether destruction is lawful yet. The database agrees -
+/// NOTE WHAT IS NOT HERE: no DELETE, and no UPDATE. Destroying key material belongs with the
+/// retention lifecycle code that decides whether destruction is lawful yet. The database agrees -
 /// V009 revokes DELETE from every role, and V013 grants app_generation INSERT only.
 /// </para>
 /// </remarks>

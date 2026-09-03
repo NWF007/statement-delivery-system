@@ -2,9 +2,9 @@
 -- V018  The retention lifecycle: erasure scheduling, restore requests, tombstones, orphan
 --       reports and reconciliation runs.
 --
--- Prompt 6 turns the dormant compliance surface (V008's legal_hold and customer_key) into the
--- working lifecycle. Everything here is additive except two constraint rebuilds on customer_key,
--- both widening: forward-only, never edited (see V016's note on the discipline).
+-- This migration turns the dormant compliance surface (V008's legal_hold and customer_key) into
+-- the working lifecycle. Everything here is additive except two constraint rebuilds on
+-- customer_key, both widening: forward-only, never edited (see V016's note on the discipline).
 -- =============================================================================================
 
 -- ---------------------------------------------------------------------------------------------
@@ -45,7 +45,7 @@ ALTER TABLE customer_key
 -- ---------------------------------------------------------------------------------------------
 -- legal_hold: the API's request fields.
 --
--- V008 modelled placement and release; the Part B API also captures WHY. The case reference
+-- V008 modelled placement and release; the legal-hold API also captures WHY. The case reference
 -- identifies the matter; the reason is the human sentence beside it.
 -- ---------------------------------------------------------------------------------------------
 ALTER TABLE legal_hold
@@ -259,7 +259,7 @@ CREATE TABLE IF NOT EXISTS reconciliation_finding
     run_id    UUID        NOT NULL,
 
     -- MISSING_OBJECT | ORPHANED_OBJECT | LEGAL_HOLD_DRIFT | RETENTION_DRIFT | AUDIT_CHAIN
-    -- | INCOMPLETE_ERASURE - the six checks of Part G.
+    -- | INCOMPLETE_ERASURE - the six checks the reconciliation pass runs.
     check_name TEXT       NOT NULL,
     severity  TEXT        NOT NULL,
     subject   TEXT        NOT NULL,

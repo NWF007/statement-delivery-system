@@ -11,7 +11,7 @@ namespace UnitTests.Retention;
 /// alone.
 /// </summary>
 /// <remarks>
-/// The audit's HIGH 2: <c>ShardFor</c> produces THREE hex characters (4096 shards) and the
+/// <c>ShardFor</c> produces THREE hex characters (4096 shards) and the
 /// sweep walked TWO-hex prefixes, so <c>statements/00/</c> never prefix-matched
 /// <c>statements/00f/…</c> and the sweep listed zero objects forever while its metric read a
 /// confident clean. A constant duplicated in two files is how it happened; these tests make the

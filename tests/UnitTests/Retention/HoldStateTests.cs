@@ -4,7 +4,10 @@ using Xunit;
 
 namespace UnitTests.Retention;
 
-/// <summary>The combined hold state's semantics — the expression the audit found duplicated and drifting.</summary>
+/// <summary>
+/// The combined hold state's semantics — the expression the purge and erasure paths each
+/// hand-rolled, until the two copies drifted apart.
+/// </summary>
 public static class HoldStateTests
 {
     [Fact]

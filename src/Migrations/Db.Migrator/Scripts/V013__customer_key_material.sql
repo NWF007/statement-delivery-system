@@ -81,7 +81,7 @@ ALTER TABLE customer_key
 -- The same envelope rule for the statement table's data keys.
 -- ---------------------------------------------------------------------------------------------
 -- V006 created wrapped_dek nullable and unused. It is used from here on, and the same "is it
--- actually wrapped" floor applies. This is acceptance check 49 expressed as a constraint rather
+-- actually wrapped" floor applies. The wrapped-key invariant is expressed as a constraint rather
 -- than as a query someone has to remember to run.
 ALTER TABLE statement
     ADD CONSTRAINT ck_statement_dek_is_wrapped

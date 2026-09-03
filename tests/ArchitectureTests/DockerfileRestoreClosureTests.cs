@@ -15,11 +15,11 @@ namespace ArchitectureTests;
 /// what the restore touches.
 /// </para>
 /// <para>
-/// Prompt 2 added <c>Domain</c>, which <c>Persistence</c> and <c>ServiceDefaults</c> both reference,
-/// and no Dockerfile was updated. Every image build then failed with NETSDK1004 - assets file not
-/// found - which means `docker compose up` from a clean clone, a stated acceptance criterion, had
-/// been broken ever since. It was invisible locally because this host has no container runtime, and
-/// invisible in CI because CI had never run.
+/// <c>Domain</c> was introduced after those Dockerfiles were written, and <c>Persistence</c> and
+/// <c>ServiceDefaults</c> both reference it, yet no Dockerfile was updated. Every image build then
+/// failed with NETSDK1004 - assets file not found - which means `docker compose up` from a clean
+/// clone, a stated requirement, had been broken ever since. It was invisible locally because this
+/// host has no container runtime, and invisible in CI because CI had never run.
 /// </para>
 /// <para>
 /// This test reads the same files Docker does and needs neither a daemon nor a build, so the next

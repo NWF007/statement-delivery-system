@@ -10,7 +10,7 @@ using Xunit;
 namespace UnitTests.Retention;
 
 /// <summary>
-/// THE PAYOFF (acceptance check 81), proven locally through the real key hierarchy: destroy the
+/// THE PAYOFF of crypto-erasure, proven locally through the real key hierarchy: destroy the
 /// CEK and the still-present ciphertext becomes permanently unreadable — no deletion required,
 /// which is the entire argument for envelope encryption under a Compliance-mode Object Lock.
 /// </summary>

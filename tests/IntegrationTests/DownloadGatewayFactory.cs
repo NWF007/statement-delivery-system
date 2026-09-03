@@ -106,7 +106,7 @@ public sealed class DownloadGatewayFactory : WebApplicationFactory<GatewayRateLi
                 ["Postgres:ReplicaConnectionString"] = _replicaConnectionString ?? string.Empty,
                 ["Postgres:MaxPoolSize"] = "60",
 
-                // PROMPT 4: real object storage, real encryption. The filesystem content store and
+                // REAL OBJECT STORAGE, REAL ENCRYPTION. The filesystem content store and
                 // its ContentStore:RootPath are gone - the gateway reads encrypted objects from
                 // MinIO now, exactly as it reads them from S3 in a deployed environment.
                 ["ObjectStorage:BucketName"] = _bucket,

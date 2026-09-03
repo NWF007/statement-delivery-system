@@ -1,10 +1,10 @@
 -- =============================================================================================
 -- V021  Every legal_hold row carries its customer_id, always.
 --
--- THE DEFECT THIS REMOVES (the Prompt 6 audit's CRITICAL): erasure asked "does this customer
--- have an active hold?" with `WHERE customer_id = @customerId` - and a STATEMENT-scoped hold
--- leaves customer_id NULL under V008's exactly-one-scope-column model, so it was invisible to
--- the one query gating the only irreversible operation in the system. A hold on one statement
+-- THE DEFECT THIS REMOVES, THE MOST SERIOUS IN THE RETENTION WORK: erasure asked "does this
+-- customer have an active hold?" with `WHERE customer_id = @customerId` - and a STATEMENT-scoped
+-- hold leaves customer_id NULL under V008's exactly-one-scope-column model, so it was invisible
+-- to the one query gating the only irreversible operation in the system. A hold on one statement
 -- did not block the erasure that would destroy that statement's readability.
 --
 -- The fix is the data model, not the query. An `OR EXISTS` against statement by customer_id
@@ -45,7 +45,7 @@ END $$;
 ALTER TABLE legal_hold ALTER COLUMN customer_id SET NOT NULL;
 
 -- V008's exactly-one-scope-column rule is retired: both columns are now set on statement-scoped
--- rows. (The brief's sketch names this constraint ck_hold_target; V008 named it
+-- rows. (The brief sketches this constraint as ck_hold_target; V008 named it
 -- ck_legal_hold_scope - dropping the name that actually exists.)
 ALTER TABLE legal_hold DROP CONSTRAINT IF EXISTS ck_legal_hold_scope;
 

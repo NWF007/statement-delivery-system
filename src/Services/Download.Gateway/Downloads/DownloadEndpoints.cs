@@ -139,7 +139,7 @@ public static class DownloadEndpoints
         // That is the whole point, and it is what this block used to get wrong. The consume
         // committed, and then DOWNLOAD_STARTED was written in a second transaction - so a crash or
         // an audit failure in between left a token spent with no record that access had been
-        // granted. The comment above this block claimed otherwise for three prompts.
+        // granted. The comment above this block claimed otherwise for three revisions.
         //
         // What is deliberately NOT in here: the diagnosis of a consume that matched no row (no
         // business write happened, so there is nothing to bind to), and everything that happens
@@ -276,9 +276,9 @@ public static class DownloadEndpoints
         {
             // A completed, unexpired restore admits the download: the object never moved (a
             // Glacier restore is a temporary copy; locally nothing moves at all, ADR-0038), so
-            // serving is just falling through to the normal read. Without one, the 409 now
-            // carries the restore endpoint Prompt 3 promised - a 409 with a way forward is a
-            // flow; without it, a support ticket.
+            // serving is just falling through to the normal read. Without one, the 409 carries
+            // the restore endpoint it promised from the start, now a real route in Delivery.Api's
+            // RestoreEndpoints. A 409 with a way forward is a flow; without it, a support ticket.
             RestoreRequestRow? liveRestore = await restores.FindLiveAsync(
                 resolved.Id, cancellationToken).ConfigureAwait(false);
 
@@ -328,7 +328,7 @@ public static class DownloadEndpoints
             return Deny();
         }
 
-        // STEP 8. Open the stream. Prompt 4 swapped this adapter for an encrypting one and NOT ONE
+        // STEP 8. Open the stream. When this adapter was swapped for an encrypting one, NOT ONE
         // LINE BELOW CHANGED - which was the test of whether this port was the right shape.
         //
         // What did change is the catch. A decryption failure is not a caller error and has no
@@ -642,11 +642,11 @@ public static class DownloadEndpoints
             }
             finally
             {
-                // clearArray, since Prompt 4. This buffer held DECRYPTED statement content - it did
-                // not before, when the same bytes came off a plain file and were no more sensitive
-                // in the pool than on the disk they came from. Returning it unwiped now hands the
-                // next renter a window onto somebody's bank statement, and the crypto streams
-                // already wipe theirs for exactly this reason.
+                // clearArray, now that the store is encrypted. This buffer held DECRYPTED
+                // statement content - it did not before, when the same bytes came off a plain file
+                // and were no more sensitive in the pool than on the disk they came from.
+                // Returning it unwiped now hands the next renter a window onto somebody's bank
+                // statement, and the crypto streams already wipe theirs for exactly this reason.
                 ArrayPool<byte>.Shared.Return(buffer, clearArray: true);
             }
 

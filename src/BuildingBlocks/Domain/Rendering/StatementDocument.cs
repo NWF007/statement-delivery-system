@@ -121,7 +121,7 @@ public sealed record StatementDocument
 /// <para>
 /// A STREAM, NEVER A <c>byte[]</c>. An 800-transaction statement must not materialise as an
 /// array: 360 concurrent renderers each holding a multi-megabyte buffer is how the fleet OOMs,
-/// and the constant-memory property Prompts 3 and 4 proved on the read path dies quietly on the
+/// and the constant-memory property already proved on the read path dies quietly on the
 /// write path. The caller pipes this output straight into the encrypting writer.
 /// </para>
 /// <para>

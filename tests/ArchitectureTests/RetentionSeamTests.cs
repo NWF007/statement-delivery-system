@@ -8,10 +8,10 @@ using Xunit;
 namespace ArchitectureTests;
 
 /// <summary>
-/// The Part B seam rule: every destructive path resolves holds through ONE component.
+/// The seam rule: every destructive path resolves holds through ONE component.
 /// </summary>
 /// <remarks>
-/// The Prompt 6 audit found the purge aggregating <c>dbHold || storeHold</c> while erasure read
+/// The purge aggregated <c>dbHold || storeHold</c> while erasure read
 /// the database alone — two hand-rolled aggregations, drifted apart, and the irreversible path
 /// got the weaker one. These tests make the drift a compile-adjacent failure: neither
 /// destructive pass may depend on <see cref="LegalHoldRepository"/> directly, and both must

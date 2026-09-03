@@ -4,7 +4,7 @@
 
 ## Context
 
-The system has claimed this rule since Prompt 2. `NpgsqlUnitOfWork` opens with it:
+The system has claimed this rule since the persistence layer was first written. `NpgsqlUnitOfWork` opens with it:
 
 > THE RULE: AN OPERATION WITH NO AUDIT RECORD MUST BE IMPOSSIBLE. The audit append happens inside the same transaction as the operation it records.
 
@@ -20,7 +20,7 @@ The download gateway repeated it: *"Consume atomically, resolve the statement, a
 
 A crash between the two left a spent token, an issued link or a revocation with no record of it. An audit write that merely *failed* was worse: the caller got a 500 for a token that was already burned, with nothing in the trail to say access had been granted. That is exactly the leverage an attacker who can induce audit failures wants — operate while the recording mechanism is the only thing that breaks.
 
-The test that was supposed to prevent this — `UnitOfWork_AuditFailure_RollsBackBusinessOperation` — opened its own transaction and called `AppendAsync` directly, a shape no production code used. It proved that `NpgsqlUnitOfWork` rolls back when a delegate throws, which is trivially true. It passed for three prompts while the rule in its own first line was false of every endpoint in the system.
+The test that was supposed to prevent this — `UnitOfWork_AuditFailure_RollsBackBusinessOperation` — opened its own transaction and called `AppendAsync` directly, a shape no production code used. It proved that `NpgsqlUnitOfWork` rolls back when a delegate throws, which is trivially true. It passed unchallenged through three development iterations while the rule in its own first line was false of every endpoint in the system.
 
 ## Decision
 
@@ -40,7 +40,7 @@ An audit failure now **rolls back the business operation**. On the redemption pa
 
 This is strictly better than the behaviour it replaces, which burned the token, recorded nothing, and returned 500.
 
-**A correction worth recording.** The remediation brief for this change described the fix as "the code catching up with ADR-0007 (fail closed when audit is unavailable)." ADR-0007 is the partitioning strategy and says nothing about auditing — the reference was wrong. The rule *was* written down once, for one path: ADR-0017 (consume-before-stream) states that the `DOWNLOAD_STARTED` record is written "in the same transaction as the consume" and that "a failure to record the grant fails the redemption." The shipped code contradicted that accepted ADR for a full prompt, on that path and every other, while comments in `NpgsqlUnitOfWork` and both endpoints repeated the claim.
+**A correction worth recording.** This fix was first written up as "the code catching up with ADR-0007 (fail closed when audit is unavailable)." ADR-0007 is the partitioning strategy and says nothing about auditing — the reference was wrong. The rule *was* written down once, for one path: ADR-0017 (consume-before-stream) states that the `DOWNLOAD_STARTED` record is written "in the same transaction as the consume" and that "a failure to record the grant fails the redemption." The shipped code contradicted that accepted ADR for an entire iteration, on that path and every other, while comments in `NpgsqlUnitOfWork` and both endpoints repeated the claim.
 
 So this ADR generalises ADR-0017's per-path decision into the system-wide rule, and is the first place the *general* rule is written down. That is worth being exact about, because the failure here was both kinds at once: on the redemption path the code was wrong against a documented decision and nothing checked them against each other; everywhere else the rule had never been written anywhere a reviewer would look.
 
@@ -63,4 +63,4 @@ The chain-head lock is now held for slightly longer on three paths, because the 
 
 - A fourth write path appears. The rule is enforced by review and by one behavioural test on the redemption path; a general architecture rule ("no state-changing endpoint calls the transactionless overload") would be better, and needs a way to tell state-changing endpoints apart from read ones.
 - Chain-head contention shows up in latency percentiles. The fix is more chains, not a looser binding — but the measurement should come first.
-- Prompt 5 adds generation. `MarkAvailableAsync` and `MarkFailedAsync` both take a transaction precisely so their audit records can join it; that is the pattern to follow, not an exception to it.
+- The generation subsystem grows new write paths. `MarkAvailableAsync` and `MarkFailedAsync` both take a transaction precisely so their audit records can join it; that is the pattern to follow, not an exception to it.

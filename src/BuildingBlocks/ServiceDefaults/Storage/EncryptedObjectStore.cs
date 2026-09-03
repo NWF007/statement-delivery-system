@@ -456,8 +456,8 @@ public sealed class S3StatementContentStore : IStatementContentStore, IStatement
         // No byte estimate: the budget settles with the REAL count after encryption, via
         // lease.RecordBytes below. The estimate-based predecessor is the reason this comment block
         // used to carry a "KNOWN AND ACCEPTED" warning about non-seekable sources zeroing the byte
-        // budget - the Prompt 5 streaming renderer walked straight into it (audit HIGH 2), and the
-        // fix was to remove the estimate rather than to improve it.
+        // budget - the streaming renderer walked straight into it, and
+        // the fix was to remove the estimate rather than to improve it.
         using DataKeyLease lease = await _keys.AcquireAsync(customer, ct).ConfigureAwait(false);
 
         string key = StorageKeyScheme.KeyFor(
@@ -474,8 +474,8 @@ public sealed class S3StatementContentStore : IStatementContentStore, IStatement
         //
         //  WHY A SPOOL AT ALL: the AWS SDK refuses a body it cannot measure - a non-seekable
         //  stream with no Content-Length throws "Could not determine content length" client-side.
-        //  The render pipeline's pipe is exactly that shape, and it broke here (the Prompt 5
-        //  audit's CRITICAL, reproduced by ContentWriterSeamTests before this fix).
+        //  The render pipeline's pipe is exactly that shape, and it broke here (reproduced by
+        //  ContentWriterSeamTests before this fix).
         //
         //  WHY THE SPOOL IS CIPHERTEXT, NOT PLAINTEXT: spooling upstream in the pipeline would
         //  put a customer's full statement in cleartext on the container filesystem - outside the
@@ -530,9 +530,9 @@ public sealed class S3StatementContentStore : IStatementContentStore, IStatement
 
             // ⚠ LOCK EXPIRY IS NOT DELETION. When this date passes the object merely becomes
             // ELIGIBLE for deletion - nothing removes it, and the storage bill continues for as
-            // long as it exists. An explicit purge job is still required (Prompt 6). A system
-            // that set a retention and assumed expiry meant cleanup would pay to store
-            // 2.5 billion objects forever and would believe it had a retention policy.
+            // long as it exists. An explicit purge job is still required - the retention worker's
+            // purge pass. A system that set a retention and assumed expiry meant cleanup would pay
+            // to store 2.5 billion objects forever and would believe it had a retention policy.
             //
             // AND THE LOCK IS CONDITIONAL ON HAVING SOMETHING TO PROTECT. A statement written for
             // a period whose statutory retention has already elapsed computes a retain-until in

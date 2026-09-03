@@ -132,4 +132,4 @@ issue → redeem → consume → decrypt → stream, with the database spans ins
 - `docker compose logs delivery-api --tail 50`
 - `curl $API/health/ready | jq` - names the failing dependency
 - The seed script is idempotent per period: re-running the generation run returns the same
-  runId (acceptance 55's idempotency, demonstrable in itself).
+  runId (the run-creation idempotency, demonstrable in itself).

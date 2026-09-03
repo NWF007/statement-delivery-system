@@ -56,10 +56,10 @@ public sealed class SchemaAndPrivilegeTests
     {
         // An allow-list, so a table nobody decided to add shows up as a failing test.
         //
-        // download_token JOINED THIS LIST IN PROMPT 3, and the negative assertion that used to sit
-        // below it - "tokens are the next prompt's work" - came off at the same time. That pairing
-        // is the point of an allow-list: adding a table is a deliberate edit here, not a silent
-        // side effect of a migration nobody read.
+        // download_token JOINED THIS LIST WHEN DOWNLOAD TOKENS SHIPPED, and the negative assertion
+        // that used to sit below it - asserting the table did not exist yet - came off at the same
+        // time. That pairing is the point of an allow-list: adding a table is a deliberate edit
+        // here, not a silent side effect of a migration nobody read.
         await using NpgsqlConnection connection = await _postgres.OpenAdminAsync(TestContext.Current.CancellationToken).ConfigureAwait(true);
 
         List<string> tables = [.. await connection.QueryAsync<string>(
@@ -128,10 +128,10 @@ public sealed class SchemaAndPrivilegeTests
     [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]
     public async Task AppDelivery_CannotDelete()
     {
-        // ACCEPTANCE CHECK 16, adapted. The brief's command targets audit_event, which does not
-        // exist yet - the scaffold has no business tables. outbox is the table that DOES exist and
-        // that app_delivery legitimately writes to, so it is the honest place to prove the same
-        // property: the delivery role can INSERT but has no DELETE anywhere.
+        // THE NO-DELETE PRIVILEGE RULE, adapted. The obvious target, audit_event, does not exist
+        // yet - the schema has no business tables at this point. outbox is the table that DOES
+        // exist and that app_delivery legitimately writes to, so it is the honest place to prove
+        // the same property: the delivery role can INSERT but has no DELETE anywhere.
         await using NpgsqlConnection connection =
             await _postgres.OpenAsAsync("app_delivery", TestContext.Current.CancellationToken).ConfigureAwait(true);
 

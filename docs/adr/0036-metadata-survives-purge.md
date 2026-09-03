@@ -1,7 +1,5 @@
 # ADR-0036: The statement row survives its own purge
 
-> Numbering note: the Prompt 6 brief calls this ADR-0032; the sequence continues from 0032.
-
 **Status:** Accepted · **Date:** 2026-08-31
 
 ## Context

@@ -51,11 +51,11 @@ public static class RetentionDecisionEngineTests
         // The precedence order, stated ONCE, as the legal analysis reads — destroyed key, then
         // hold, then physical lock, then statute, then purge. This is the specification the
         // engine is checked against, not a copy of its implementation: it is written from the
-        // prompt's precedence table and reviewed as such.
+        // precedence table ADR-0033 sets out, and reviewed as such.
         static RetentionDecision Expected(
             bool destroyed, bool held, bool lockPresent, bool lockFuture, bool retainFuture)
         {
-            // Remediation A4: destroyed-under-an-active-hold blocks rather than shrugging -
+            // Defence in depth: destroyed-under-an-active-hold blocks rather than shrugging -
             // the state should be unreachable, and if it is ever reached the hold must win.
             if (destroyed && held)
             {
@@ -132,8 +132,8 @@ public static class RetentionDecisionEngineTests
     {
         // Lock live, statute unexpired - and neither matters: the ciphertext is already
         // unreadable, so the only correct action is bookkeeping. (The one thing a destroyed key
-        // does NOT short-circuit, since remediation A4, is an active hold - see
-        // RetentionDecision_ErasedUnderActiveHold_IsBlocked.)
+        // does NOT short-circuit, since the defence-in-depth guard was added, is an active hold -
+        // see RetentionDecision_ErasedUnderActiveHold_IsBlocked.)
         var ctx = new RetentionContext(Future, Future, false, null, true, Today);
 
         RetentionDecisionEngine.Decide(ctx).ShouldBe(new RetentionDecision.AlreadyErased());
@@ -161,9 +161,9 @@ public static class RetentionDecisionEngineTests
     [Fact]
     public static void RetentionDecision_ErasedUnderActiveHold_IsBlocked()
     {
-        // Defence in depth (remediation A4). Erasure while a hold is active is supposed to be
-        // impossible upstream - so if this state is ever observed, the LAST thing the system
-        // should do is calmly book the held statement as purgeable. The hold must win, loudly.
+        // Defence in depth. Erasure while a hold is active is supposed to be impossible upstream -
+        // so if this state is ever observed, the LAST thing the system should do is calmly book
+        // the held statement as purgeable. The hold must win, loudly.
         var ctx = new RetentionContext(Past, null, true, CaseRef, CustomerKeyDestroyed: true, Today);
 
         RetentionDecisionEngine.Decide(ctx).ShouldBe(new RetentionDecision.BlockedByLegalHold(CaseRef));

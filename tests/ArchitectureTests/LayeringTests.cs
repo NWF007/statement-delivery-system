@@ -66,7 +66,7 @@ public sealed class LayeringTests
     [Fact]
     public void Services_ShouldNotReferenceEachOther()
     {
-        // Five deployables that can be released independently (Prompt 5 added MockLedger.Api,
+        // Five deployables that can be released independently (MockLedger.Api is one of them,
         // which exists precisely BECAUSE it shares no code with its caller - a resilience policy
         // tested against an in-process stub is not tested). The moment one references another
         // they share a build, a version and a blast radius, and the microservice split has bought

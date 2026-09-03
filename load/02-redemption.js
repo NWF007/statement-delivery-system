@@ -3,7 +3,7 @@
 // that coupling is part of the honest result, not an artefact to hide.
 //
 // The same script measures the DENIAL path separately (a deliberate replay): the 50 ms
-// uniform-timing floor from Prompt 3 puts a hard per-connection ceiling on denial throughput -
+// uniform-timing floor on redemption puts a hard per-connection ceiling on denial throughput -
 // SCALE.md hypothesis #3 - so denials get their own trend metric rather than polluting p99.
 import http from 'k6/http';
 import { check } from 'k6';

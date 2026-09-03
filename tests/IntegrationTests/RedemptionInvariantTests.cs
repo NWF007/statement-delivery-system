@@ -39,7 +39,7 @@ public sealed class RedemptionInvariantTests
     private static Uri Redeem(string plaintext) => new("/v1/d/" + plaintext, UriKind.Relative);
 
     // =============================================================================================
-    //  PART A. THE SECURITY-GATING READ MUST NOT BE ROUTED TO A REPLICA.
+    //  INVARIANT 1. THE SECURITY-GATING READ MUST NOT BE ROUTED TO A REPLICA.
     // =============================================================================================
 
     [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]
@@ -100,7 +100,7 @@ public sealed class RedemptionInvariantTests
     }
 
     // =============================================================================================
-    //  PART B. AN OPERATION WITH NO AUDIT RECORD MUST BE IMPOSSIBLE.
+    //  INVARIANT 2. AN OPERATION WITH NO AUDIT RECORD MUST BE IMPOSSIBLE.
     // =============================================================================================
 
     [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]

@@ -31,9 +31,10 @@ namespace Generation.Worker;
 /// renderer writes PDF bytes into a bounded pipe; the encrypting store reads from the other end,
 /// frames, encrypts and uploads AS THE RENDERER WRITES. The full PDF exists nowhere in this
 /// process: not as a byte[], not as a MemoryStream. 360 workers each holding a multi-megabyte
-/// buffer is how the fleet OOMs, and the constant-memory property Prompts 3 and 4 proved on the
-/// read path would die quietly right here. The bridge also owns the failure contract - see its
-/// remarks; the Prompt 5 audit's HIGH 1 lived there.
+/// buffer is how the fleet OOMs, and the constant-memory property the read path already proves
+/// (LargeStatement_StreamsWithoutHeapGrowth) would die quietly right here. The bridge also owns
+/// the failure contract - see its remarks, which record the high-severity defect that once lived
+/// in that contract.
 /// </para>
 /// <para>
 /// STEP 5 IS ONE TRANSACTION: statement row (insert PENDING, publish AVAILABLE), outbox event,
@@ -179,9 +180,9 @@ public sealed partial class RenderPipeline
         //     30M/month run, ~3,000 orphans/month at ~200KB is ~600MB/month of unreclaimable
         //     storage until the lock expires. Recorded in docs/LIMITATIONS.md.
         // The other half of that reconciliation is the retention worker's weekly orphan sweep
-        // (Prompt 6, ADR-0039): statement_content_missing_total covers rows without objects;
-        // the sweep covers objects without rows, report-only, with the storage_tombstone
-        // ledger distinguishing leaked objects from lawful erasure remnants.
+        // (ADR-0039): statement_content_missing_total covers rows without objects; the sweep
+        // covers objects without rows, report-only, with the storage_tombstone ledger that
+        // distinguishes leaked objects from lawful erasure remnants.
         stageStart = _time.GetTimestamp();
 
         StoredObject stored = await RenderStreamBridge.ExecuteAsync(

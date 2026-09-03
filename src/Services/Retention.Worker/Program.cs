@@ -20,11 +20,11 @@ WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 builder.AddServiceDefaults();
 builder.AddPersistence(serviceName: "retention-worker");
 
-// Prompt 6: object storage arrives in the same commit as the ability to delete an object, exactly
-// as the Prompt 5 note here promised. The full admin surface (delete, lock reads, legal holds,
-// listing) belongs to THIS service alone; AddCrypto brings the key hierarchy the erasure executor
-// destroys keys through; the encrypted content store registration brings the Object Lock
-// readiness verification.
+// Object storage was wired in here in the same commit that gave the worker the ability to delete
+// an object, exactly as the earlier note in this file promised. The full admin surface (delete,
+// lock reads, legal holds, listing) belongs to THIS service alone; AddCrypto brings the key
+// hierarchy the erasure executor destroys keys through; the encrypted content store registration
+// brings the Object Lock readiness verification.
 builder.AddObjectStorage();
 builder.AddCrypto();
 builder.AddEncryptedContentStore(includeWriter: false);

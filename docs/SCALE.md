@@ -164,7 +164,7 @@ $ curl -s -o /dev/null -w '%{http_code}' "$ISSUED_URL"
 This is a **gap between the seeding tool and the load harness**, not a fault in either alone: the
 seeder exists to size the catalogue, the harness assumes retrievable content, and no one had run
 both together before today. Measuring redeem throughput requires a generation run to have written
-real ciphertext first — see B7 below for why this host cannot afford that.
+real ciphertext first — see *Generation throughput* below for why this host cannot afford that.
 
 **Hypothesis 3 (the 50 ms denial floor) — CONFIRMED, by a different route.** With the script's
 replay path blocked by the same missing objects, the uniform-timing floor was measured directly
@@ -213,7 +213,7 @@ are limited by the same shared host resource rather than by anything specific to
 The mixed scenario's errors are **its 5% redeem slice 404ing** for the reason above, not a separate
 finding; its browse and issue slices behave as their standalone scenarios do.
 
-### Generation throughput (`load/05-generation.js`, B7)
+### Generation throughput (`load/05-generation.js`)
 
 | Metric | Value |
 |---|---|
@@ -559,7 +559,7 @@ Measured, at 85.7M rows: the list touches 3 partitions of 31 and returns in 7.5 
 
 - *Not measured: the redeem path end to end.* Blocked by seeded rows naming objects that do not
   exist; needs a generation run first.
-- *Not measured: generation throughput (B7).* Needs ~740 GB of object storage at the seeded volume;
+- *Not measured: generation throughput.* Needs ~740 GB of object storage at the seeded volume;
   20 GiB free. `FullRun_1000Accounts` is the bounded proxy and currently fails on this host.
 - *Not measured: sustained month-end burst at the full 1,400 inserts/sec target.* The measured
   ceiling is 263 issues/sec on a 4-core shared host — a host limit, not a system limit, but the

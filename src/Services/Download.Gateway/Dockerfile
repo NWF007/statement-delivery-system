@@ -35,7 +35,7 @@ COPY --from=build /app/publish .
 # A chiseled image has no shell, so this cannot be done with RUN mkdir in this stage - and
 # it matters, because Docker initialises a fresh named volume from the ownership and mode of
 # the image directory it is mounted over. Without this the volume arrives root-owned and the
-# non-root process cannot read it. Prompt 4 replaces this adapter with object storage.
+# non-root process cannot read it. This adapter was later replaced by object storage.
 COPY --from=build --chown=1654:1654 /content /var/lib/statement-delivery/content
 
 # Non-root. $APP_UID is baked into the Microsoft base images (uid 1654); using it rather than a

@@ -15,7 +15,7 @@ using Xunit;
 namespace UnitTests.Storage;
 
 /// <summary>
-/// THE SEAM THAT BROKE. The Prompt 5 audit's CRITICAL: RenderPipeline hands the writer a
+/// THE SEAM THAT BROKE - a critical defect. RenderPipeline hands the writer a
 /// NON-SEEKABLE stream, the writer computed Content-Length from CanSeek, and the AWS SDK refused
 /// the upload client-side. Every S3-writing test used a seekable MemoryStream, so the untested
 /// branch was exactly the branch production takes.

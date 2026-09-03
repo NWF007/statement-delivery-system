@@ -54,7 +54,7 @@ public sealed record RetryFailuresRequest(IReadOnlyList<long>? ItemIds, bool All
 /// delivery path" means the customer-facing read and redemption flows - none of which these
 /// endpoints touch. This is a new, additive, staff-scoped surface beside the existing staff
 /// audit-verify endpoint, placed here because the worker exposes no HTTP beyond health probes
-/// (a deliberate Prompt 1 decision) and the acceptance criteria address these routes to :8081.
+/// (a deliberate design decision) and these routes are specified on the API's :8081 surface.
 /// The grants deviation this forces is documented in V017.
 /// </para>
 /// <para>
@@ -130,7 +130,7 @@ public static class StatementRunEndpoints
         int deadlineHours = configuration.GetValue("Generation:RunDeadlineHours", 6);
 
         // CreateOrGet is idempotent on UNIQUE(period): a re-trigger returns the EXISTING run with
-        // its original id and totals - acceptance 55's "same runId, total_items unchanged".
+        // its original id and totals: the same runId, with total_items unchanged.
         StatementRun run = await runs.CreateOrGetAsync(
             ids.NewId(), period, time.GetUtcNow().AddHours(deadlineHours), cancellationToken)
             .ConfigureAwait(false);

@@ -19,7 +19,7 @@
     concern inside the model.
   -->
   <!--
-    Crypto joins Domain as an inward dependency in Prompt 4. Persistence supplies the customer_key
+    Crypto joins Domain as an inward dependency. Persistence supplies the customer_key
     adapter behind ICustomerKeyStore; the port and the cipher stay in Crypto, which knows nothing
     about Npgsql. The arrow still points one way.
   -->

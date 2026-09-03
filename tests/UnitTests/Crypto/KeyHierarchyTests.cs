@@ -129,9 +129,9 @@ public sealed class KeyHierarchyTests
 
         unwrapped.Span.ToArray().ShouldBe(plaintext);
 
-        // ACCEPTANCE CHECK 49, AS A UNIT TEST. A raw AES-256 key is 32 bytes; the envelope adds a
-        // version byte, a 12-byte nonce and a 16-byte tag. Anything below 40 bytes in a wrapped_dek
-        // or wrapped_cek column is therefore a plaintext key somebody has persisted.
+        // THE PLAINTEXT-KEY TRIPWIRE, AS A UNIT TEST. A raw AES-256 key is 32 bytes; the envelope
+        // adds a version byte, a 12-byte nonce and a 16-byte tag. Anything below 40 bytes in a
+        // wrapped_dek or wrapped_cek column is therefore a plaintext key somebody has persisted.
         generated.Wrapped.Length.ShouldBe(61);
         generated.Wrapped.Length.ShouldBeGreaterThan(40);
     }
@@ -291,9 +291,10 @@ public sealed class KeyHierarchyTests
     [Fact]
     public async Task DataKeyLease_RecordBytes_DrivesByteBudgetRotation()
     {
-        // THE SETTLE-BASED BYTE BUDGET (audit HIGH 2). The old contract charged a caller-supplied
-        // ESTIMATE at acquire time; the streaming writer estimated zero and the budget went blind.
-        // Now the REAL count settles via RecordBytes, and rotation follows recorded spend.
+        // THE SETTLE-BASED BYTE BUDGET, AND THE HIGH-SEVERITY DEFECT IT CLOSES. The old contract
+        // charged a caller-supplied ESTIMATE at acquire time; the streaming writer estimated zero
+        // and the budget went blind. Now the REAL count settles via RecordBytes, and rotation
+        // follows recorded spend.
         var clock = new TestClock(new DateTimeOffset(2026, 8, 27, 12, 0, 0, TimeSpan.Zero));
         var customerKeys = new CountingCustomerKeyService();
 
@@ -330,11 +331,11 @@ public sealed class KeyHierarchyTests
     [Fact]
     public async Task DataKeyLease_DisposedWithoutRecordBytes_Fails()
     {
-        // FORGETTING MUST BE LOUD (audit HIGH 2's real lesson: an API that lets a caller silently
-        // skip the budget is how the budget went blind). Disposal without settlement logs an ERROR.
-        // It logs rather than throws, deliberately: a throw inside `using` disposal would fire on
-        // every failure path and REPLACE the real exception - the exact error-masking Part B of
-        // this remediation removes elsewhere.
+        // FORGETTING MUST BE LOUD. An API that lets a caller silently skip the budget is how the
+        // budget went blind in the first place, so disposal without settlement logs an ERROR. It
+        // logs rather than throws, deliberately: a throw inside `using` disposal would fire on
+        // every failure path and REPLACE the real exception - the exact kind of error-masking
+        // this codebase removes wherever it appears.
         var clock = new TestClock(new DateTimeOffset(2026, 8, 27, 12, 0, 0, TimeSpan.Zero));
         var logger = new RecordingLogger<DataKeyCache>();
 
@@ -422,14 +423,14 @@ public sealed class KeyHierarchyTests
     [Fact]
     public async Task DestroyCek_RequiresADocumentedReason()
     {
-        // The Prompt 4 predecessor of this test pinned DestroyCekAsync as NotImplementedException,
-        // so the destructive half could not ship before the code that decides whether destruction
-        // is LAWFUL. Prompt 6 built that code (the retention decision engine, the cooling-off
-        // window, the re-evaluating executor), so the deferral assertion became obsolete - and
-        // this replaces it with the new contract's floor: destruction without a documented reason
-        // is refused, because an undocumented erasure cannot be defended later. The full
-        // behaviour - idempotent destruction, permanent undecryptability, no resurrection - is
-        // pinned in UnitTests.Retention.CryptoErasureTests.
+        // An earlier version of this test pinned DestroyCekAsync as NotImplementedException, so the
+        // destructive half could not ship before the code that decides whether destruction is
+        // LAWFUL. That code now exists (the retention decision engine, the cooling-off window, the
+        // re-evaluating executor), so the deferral assertion became obsolete - and this replaces
+        // it with the new contract's floor: destruction without a documented reason is refused,
+        // because an undocumented erasure cannot be defended later. The full behaviour -
+        // idempotent destruction, permanent undecryptability, no resurrection - is pinned in
+        // UnitTests.Retention.CryptoErasureTests.
         var service = new CustomerKeyService(Provider, new NullCustomerKeyStore(), NullLogger<CustomerKeyService>.Instance);
 
         _ = await Should.ThrowAsync<ArgumentException>(() =>

@@ -10,7 +10,7 @@ using Xunit;
 namespace IntegrationTests;
 
 /// <summary>
-/// The batch subsystem under the failures Part G promises it survives: poison payloads, dead
+/// The batch subsystem under the failures it is designed to survive: poison payloads, dead
 /// workers, a broken ledger, and a saturated generation pool.
 /// </summary>
 [Collection(PostgresCollection.Name)]

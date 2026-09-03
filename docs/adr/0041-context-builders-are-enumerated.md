@@ -10,11 +10,11 @@ so it passed:
 
 | Round | Correct component | Defective seam |
 |---|---|---|
-| Prompts 1–4 | Atomic consume, hash chain primitives | The transaction they ran in |
-| Prompt 5 | Render pipeline, storage adapter | The stream contract between them |
-| Prompt 6 | Decision engine, 32-row table | The context construction feeding it |
+| 1 — download and audit | Atomic consume, hash chain primitives | The transaction they ran in |
+| 2 — rendering and storage | Render pipeline, storage adapter | The stream contract between them |
+| 3 — retention and erasure | Decision engine, 32-row table | The context construction feeding it |
 
-The Prompt 6 instance is the sharpest: the engine had a 32-row exhaustive table, so a wrong
+The retention instance is the sharpest: the engine had a 32-row exhaustive table, so a wrong
 branch could not hide. The three call sites that *built its input* each mapped the world onto
 the engine's parameters by hand, slightly differently, with one example test apiece — and the
 unexercised scope was the production one.
@@ -41,12 +41,12 @@ Concretely:
 
 ## Consequences
 
-- The CRITICAL is now one red cell in a matrix instead of an argument in an audit.
+- The critical defect is now one red cell in a matrix instead of an argument someone has to make.
 - Constants consumed by more than one component are derived, not duplicated
   (`StorageKeyScheme.ShardCount`/`ShardWidth` feeding the orphan sweep, pinned by
   `OrphanSweep_PrefixSet_MatchesStorageKeyScheme`).
-- The standing sweep (this round's D3, repeated at each audit): for every exhaustively-tested
-  pure function, name what builds its input and whether that builder is enumerated.
+- The standing sweep, repeated each round: for every exhaustively-tested pure function, name what
+  builds its input and whether that builder is enumerated.
 
 ## Revisit when
 

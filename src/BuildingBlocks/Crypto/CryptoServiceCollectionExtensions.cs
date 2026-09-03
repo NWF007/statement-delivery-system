@@ -48,7 +48,7 @@ public static class CryptoServiceCollectionExtensions
         // Factory registration, NOT AddSingleton<IStreamingCipher, FramedAeadCipher>():
         // the cipher has two public constructors (options for DI, int frame size for tests),
         // and DI activation refuses ambiguous constructors - which made every host that calls
-        // AddCrypto fail at build validation. Found by the Prompt 7 endpoint-enumeration test,
+        // AddCrypto fail at build validation. Found by the endpoint-enumeration test,
         // which is the first thing that ever actually CONSTRUCTED these hosts on this
         // Docker-less machine.
         builder.Services.AddSingleton<IStreamingCipher>(static sp =>

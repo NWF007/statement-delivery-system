@@ -30,9 +30,9 @@ public sealed class CryptoBoundaryTests
     /// A DENY-LIST WOULD BE THE WRONG SHAPE HERE, and it was: the first version of this rule listed
     /// the five assemblies that must NOT reference DataKey, which meant its coverage was defined by
     /// an array somebody had to remember to extend. It silently omitted ServiceDefaults - which does
-    /// reference DataKey - and both workers, one of which is the service Prompt 5 will build around
-    /// the key hierarchy. A rule that cannot fire for the project most likely to break it is not a
-    /// rule.
+    /// reference DataKey - and both workers, one of which is the service that would go on to be
+    /// built around the key hierarchy. A rule that cannot fire for the project most likely to
+    /// break it is not a rule.
     ///
     /// Inverted, it is an ALLOW-LIST checked against every assembly actually present in the build
     /// output, so a new project is covered the day it exists rather than the day someone remembers.
@@ -172,7 +172,7 @@ public sealed class CryptoBoundaryTests
     [Fact]
     public void Domain_ShouldStillHaveNoPackageDependencies()
     {
-        // Re-asserted after Prompt 4, because this is exactly the prompt that would have broken it.
+        // Re-asserted once Crypto landed, because that is exactly the change that would break it.
         // Crypto references Domain; Domain must not have acquired a reference back, nor a package,
         // in order to describe a CryptoEnvelope. It describes one with byte arrays and strings.
         ProjectNode domain = SolutionGraph.Projects.Single(project => project.Name == "Domain");
