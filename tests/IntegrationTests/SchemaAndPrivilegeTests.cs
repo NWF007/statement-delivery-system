@@ -25,7 +25,7 @@ public sealed class SchemaAndPrivilegeTests
         List<string> applied = [.. await connection.QueryAsync<string>(
             "SELECT scriptname FROM schemaversions ORDER BY scriptname;").ConfigureAwait(true)];
 
-        applied.Count.ShouldBe(23);
+        applied.Count.ShouldBe(24);
         applied.ShouldContain(name => name.Contains("V001__roles_and_grants", StringComparison.Ordinal));
         applied.ShouldContain(name => name.Contains("V002__distributed_lease", StringComparison.Ordinal));
         applied.ShouldContain(name => name.Contains("V003__partition_helper_functions", StringComparison.Ordinal));
@@ -49,6 +49,7 @@ public sealed class SchemaAndPrivilegeTests
         applied.ShouldContain(name => name.Contains("V021__legal_hold_customer_scope", StringComparison.Ordinal));
         applied.ShouldContain(name => name.Contains("V022__erasure_block_bookkeeping", StringComparison.Ordinal));
         applied.ShouldContain(name => name.Contains("V023__reconciliation_enqueue_grant", StringComparison.Ordinal));
+        applied.ShouldContain(name => name.Contains("V024__statement_run_item_retry_grant", StringComparison.Ordinal));
     }
 
     [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]
