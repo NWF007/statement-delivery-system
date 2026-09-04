@@ -1,0 +1,3168 @@
+{
+  "info": {
+    "name": "Statement Delivery Platform (host debug)",
+    "_postman_id": "b1f7c0de-0000-4000-a000-0000000000c2",
+    "description": "Exercises the Delivery.Api (8081) and Download.Gateway (8082) end to end - happy paths, denial paths, and the compliance flows. Derived from the running APIs' OpenAPI documents at /openapi/v1.json. Import the local environment, run top to bottom (folder 02 before 03), and read postman/README.md for the single-use caveat and the findings. Tokens are minted in-band from /v1/dev/tokens; no credential is stored in this file.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "00 Setup",
+      "description": "Health, ping, in-band token minting, and resolving a real customer + statement. The collection-level pre-request already mints the four JWTs; these requests prove the stack is reachable and capture the statement id + partition key that everything downstream needs.",
+      "item": [
+        {
+          "name": "GET Delivery /health/live",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{deliveryUrl}}/health/live",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "health",
+                "live"
+              ]
+            },
+            "description": "Liveness: process is up. No dependencies consulted."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET Delivery /health/ready",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{deliveryUrl}}/health/ready",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "health",
+                "ready"
+              ]
+            },
+            "description": "Readiness: dependency booleans. 200 with a live DB/object store; 503 when a dependency is down. Asserted as either so the request is honest on a partial stack."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 or 503', () => pm.expect([200,503]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET Gateway /health/live",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/health/live",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "health",
+                "live"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET Gateway /health/ready",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/health/ready",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "health",
+                "ready"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 or 503', () => pm.expect([200,503]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /ping",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{deliveryUrl}}/ping",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "ping"
+              ]
+            },
+            "description": "Build identity for operators."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "['service','version','environment'].forEach(k =>",
+                  "  pm.test(`ping has ${k}`, () => pm.expect(b).to.have.property(k)));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Resolve statement id + period",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/customers/{{customerAId}}/statements?from=2020-01-01&to=2026-12-31&limit=1",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "customers",
+                "{{customerAId}}",
+                "statements"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "2020-01-01"
+                },
+                {
+                  "key": "to",
+                  "value": "2026-12-31"
+                },
+                {
+                  "key": "limit",
+                  "value": "1"
+                }
+              ]
+            },
+            "description": "Lists customer A's statements and captures the first result's id and period.start into statementId / statementPeriod. Needs seeded data; skips capture cleanly if the list is empty so the folder still passes on an unseeded stack (later data folders will then report the missing id).",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "Authorization",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "Bearer {{jwtCustomerA}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A DISCOVERY request, not a property test: its job is to capture ids. On a seeded",
+                  "// stack it is 200 and captures; on an unseeded DB it is 404; on a host with no",
+                  "// database at all it is 5xx. All are tolerated with a warning so the setup folder is",
+                  "// honest about the stack it was pointed at - the data folders then report the gap.",
+                  "pm.test('reachable (200/404/5xx tolerated for discovery)',",
+                  "  () => pm.expect([200,404,500,503]).to.include(pm.response.code));",
+                  "if (pm.response.code === 200) {",
+                  "  const b = pm.response.json();",
+                  "  if (b.items && b.items.length) {",
+                  "    pm.collectionVariables.set('statementId', b.items[0].id);",
+                  "    pm.collectionVariables.set('statementPeriod', b.items[0].period.start);",
+                  "    console.log('captured statementId ' + pm.collectionVariables.get('statementId'));",
+                  "  } else {",
+                  "    console.warn('customer A has no statements - seed data before the data folders.');",
+                  "  }",
+                  "} else {",
+                  "  console.warn('statement list returned ' + pm.response.code +",
+                  "    ' - the data folders (01-08) need the full stack (DB + object store) to pass.');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "01 Catalogue",
+      "description": "The customer statement list and single-statement lookup. Proves the mandatory date-range contract (partition pruning), cursor round-trip, and that NO crypto material ever appears in a catalogue response.",
+      "item": [
+        {
+          "name": "List statements",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/customers/{{customerAId}}/statements?from=2020-01-01&to=2026-12-31&limit=50",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "customers",
+                "{{customerAId}}",
+                "statements"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "2020-01-01"
+                },
+                {
+                  "key": "to",
+                  "value": "2026-12-31"
+                },
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "Authorization",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "Bearer {{jwtCustomerA}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('items is an array', () => pm.expect(b.items).to.be.an('array'));",
+                  "if (b.nextCursor) pm.collectionVariables.set('nextCursor', b.nextCursor);",
+                  "const forbidden = ['storage_key','storageKey','wrapped_dek','wrappedDek',\n                   'kek_id','kekId','iv','auth_tag','authTag','content_sha256'];\nconst body = pm.response.text();\nforbidden.forEach(f => pm.test(`response does not leak ${f}`,\n  () => pm.expect(body).to.not.include(f)));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List statements — next page",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/customers/{{customerAId}}/statements?from=2020-01-01&to=2026-12-31&limit=50&cursor={{nextCursor}}",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "customers",
+                "{{customerAId}}",
+                "statements"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "2020-01-01"
+                },
+                {
+                  "key": "to",
+                  "value": "2026-12-31"
+                },
+                {
+                  "key": "limit",
+                  "value": "50"
+                },
+                {
+                  "key": "cursor",
+                  "value": "{{nextCursor}}"
+                }
+              ]
+            },
+            "description": "Runs only meaningfully when the first page set nextCursor. An opaque cursor that round-trips is the pagination contract.",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "Authorization",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "Bearer {{jwtCustomerA}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 (cursor round-trips)', () => pm.response.to.have.status(200));",
+                  "const forbidden = ['storage_key','storageKey','wrapped_dek','wrappedDek',\n                   'kek_id','kekId','iv','auth_tag','authTag','content_sha256'];\nconst body = pm.response.text();\nforbidden.forEach(f => pm.test(`response does not leak ${f}`,\n  () => pm.expect(body).to.not.include(f)));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List — missing from/to is 400",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/customers/{{customerAId}}/statements?limit=50",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "customers",
+                "{{customerAId}}",
+                "statements"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            },
+            "description": "The date range is REQUIRED - it is what lets the query prune partitions.",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "Authorization",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "Bearer {{jwtCustomerA}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List — range over 84 months is 400",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/customers/{{customerAId}}/statements?from=2000-01-01&to=2026-12-31&limit=50",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "customers",
+                "{{customerAId}}",
+                "statements"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "2000-01-01"
+                },
+                {
+                  "key": "to",
+                  "value": "2026-12-31"
+                },
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "Authorization",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "Bearer {{jwtCustomerA}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get one statement",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/statements/{{statementId}}?period={{statementPeriod}}",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "statements",
+                "{{statementId}}"
+              ],
+              "query": [
+                {
+                  "key": "period",
+                  "value": "{{statementPeriod}}"
+                }
+              ]
+            },
+            "description": "Single lookup. The period is the partition key - omitting it is a 400 (next request).",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "Authorization",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "Bearer {{jwtCustomerA}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 or 404 (unseeded)', () => pm.expect([200,404]).to.include(pm.response.code));",
+                  "if (pm.response.code === 200) {",
+                  "  const b = pm.response.json();",
+                  "  pm.test('has id and status', () => { pm.expect(b).to.have.property('id'); pm.expect(b).to.have.property('status'); });",
+                  "}",
+                  "const forbidden = ['storage_key','storageKey','wrapped_dek','wrappedDek',\n                   'kek_id','kekId','iv','auth_tag','authTag','content_sha256'];\nconst body = pm.response.text();\nforbidden.forEach(f => pm.test(`response does not leak ${f}`,\n  () => pm.expect(body).to.not.include(f)));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get one — missing period is 400",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/statements/{{statementId}}",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "statements",
+                "{{statementId}}"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "Authorization",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "Bearer {{jwtCustomerA}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "02 Download — happy path",
+      "description": "Issue a single-use link, redeem it, and prove the PDF plus every security header. MUST run before folder 03, which replays this token. The redeemed URL is cleared immediately after use (see README, 'single-use').",
+      "item": [
+        {
+          "name": "Issue download link",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/statements/{{statementId}}/download-links?period={{statementPeriod}}",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "statements",
+                "{{statementId}}",
+                "download-links"
+              ],
+              "query": [
+                {
+                  "key": "period",
+                  "value": "{{statementPeriod}}"
+                }
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "Authorization",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "Bearer {{jwtCustomerA}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ttlSeconds\": 600\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => pm.response.to.have.status(201));",
+                  "const b = pm.response.json();",
+                  "['url','expiresAt','linkId','singleUse'].forEach(k =>",
+                  "  pm.test(`issue response has ${k}`, () => pm.expect(b).to.have.property(k)));",
+                  "pm.test('singleUse is true', () => pm.expect(b.singleUse).to.eql(true));",
+                  "pm.test('expiresAt within an hour', () => {",
+                  "  const secs = (new Date(b.expiresAt) - new Date()) / 1000;",
+                  "  pm.expect(secs).to.be.above(0).and.below(3700);",
+                  "});",
+                  "pm.collectionVariables.set('downloadUrl', b.url);",
+                  "pm.collectionVariables.set('linkId', b.linkId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Download the PDF",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{downloadUrl}}",
+              "host": [
+                "{{downloadUrl}}"
+              ],
+              "path": []
+            },
+            "description": "Redeems the capability URL. The token IS the credential, so no Authorization header."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "pm.test('content-type is pdf', () => pm.expect(pm.response.headers.get('content-type') || '').to.match(/application\\/pdf/));",
+                  "pm.test('body starts with %PDF', () => pm.expect(pm.response.text().slice(0,4)).to.eql('%PDF'));",
+                  "const headers = {\n  'cache-control': /no-store/,\n  'content-disposition': /attachment/,\n  'x-content-type-options': /nosniff/,\n  'referrer-policy': /no-referrer/\n};\nObject.entries(headers).forEach(([h, re]) =>\n  pm.test(`${h} is set correctly`, () =>\n    pm.expect(pm.response.headers.get(h) || '').to.match(re)));",
+                  "// Keep ONE copy of the just-spent url for folder 03's replay case - the only place a",
+                  "// spent token is used on purpose - then clear the live variable so nothing reuses it",
+                  "// by accident.",
+                  "pm.collectionVariables.set('spentUrl', pm.collectionVariables.get('downloadUrl'));",
+                  "pm.collectionVariables.unset('downloadUrl');"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "03 Download — denials",
+      "description": "Every way a redemption legitimately fails, and the property that matters most: the denials are byte-identical. A reviewer running this folder SEES the uniform denial rather than reading about it. Runs after 02 so the replay case has a spent token to reuse.",
+      "item": [
+        {
+          "name": "Replay the spent token from 02",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{spentUrl}}",
+              "host": [
+                "{{spentUrl}}"
+              ],
+              "path": []
+            },
+            "description": "Redeems the SAME url folder 02 already spent (02 kept a copy in spentUrl for exactly this). A single-use token consumed once must be a 404 on the second redemption."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get('spentUrl')) console.warn('no spentUrl - run folder 02 first');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 on the second redemption', () => pm.expect([404]).to.include(pm.response.code));",
+                  "pm.collectionVariables.set('denyBody_replay', pm.response.text());"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Revoked link is rejected",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{downloadUrl}}",
+              "host": [
+                "{{downloadUrl}}"
+              ],
+              "path": []
+            },
+            "description": "Issues a link (pre-request), DELETEs it, then redeems. Expect 404."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const delivery = pm.collectionVariables.get('deliveryUrl');",
+                  "pm.sendRequest({",
+                  "  url: `${delivery}/v1/statements/${pm.collectionVariables.get('statementId')}/download-links?period=${pm.collectionVariables.get('statementPeriod')}`,",
+                  "  method: 'POST',",
+                  "  header: { 'Authorization': `Bearer ${pm.collectionVariables.get('jwtCustomerA')}`, 'Content-Type': 'application/json' },",
+                  "  body: { mode: 'raw', raw: JSON.stringify({ ttlSeconds: 600 }) }",
+                  "}, (e1, issue) => {",
+                  "  if (e1 || issue.code !== 201) { console.warn('issue failed for revoke case'); return; }",
+                  "  const url = issue.json().url, id = issue.json().linkId;",
+                  "  pm.sendRequest({",
+                  "    url: `${delivery}/v1/download-links/${id}`, method: 'DELETE',",
+                  "    header: { 'Authorization': `Bearer ${pm.collectionVariables.get('jwtCustomerA')}` }",
+                  "  }, () => pm.collectionVariables.set('downloadUrl', url));",
+                  "});"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 after revoke', () => pm.expect([404]).to.include(pm.response.code));",
+                  "pm.collectionVariables.set('denyBody_revoked', pm.response.text());",
+                  "pm.collectionVariables.unset('downloadUrl');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Malformed token",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/v1/d/not-a-real-token",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "v1",
+                "d",
+                "not-a-real-token"
+              ]
+            },
+            "description": "A value that is not even the right shape. Per the source (TokenSecret.TryParse -> DenyAsync) this is a uniform 404, never a 400 that would confirm the encoding."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404', () => pm.expect([404]).to.include(pm.response.code));",
+                  "pm.collectionVariables.set('denyBody_malformed', pm.response.text());"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Wrong-length token",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/v1/d/abcdefghij",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "v1",
+                "d",
+                "abcdefghij"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404', () => pm.expect([404]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unknown but well-formed token",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/v1/d/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "v1",
+                "d",
+                "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+              ]
+            },
+            "description": "43 base64url chars that decode cleanly but match no row."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404', () => pm.expect([404]).to.include(pm.response.code));",
+                  "pm.collectionVariables.set('denyBody_unknown', pm.response.text());"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cross-customer issue is refused",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/statements/{{statementId}}/download-links?period={{statementPeriod}}",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "statements",
+                "{{statementId}}",
+                "download-links"
+              ],
+              "query": [
+                {
+                  "key": "period",
+                  "value": "{{statementPeriod}}"
+                }
+              ]
+            },
+            "description": "Customer B asking for a link to A's statement. Ownership is a predicate: 404, indistinguishable from a statement that does not exist.",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "Authorization",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "Bearer {{jwtCustomerB}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ttlSeconds\": 600\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 (never 403)', () => pm.expect([404]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "★ All denials are byte-identical",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/v1/d/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "v1",
+                "d",
+                "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+              ]
+            },
+            "description": "The most valuable assertion in the collection. Compares the bodies captured above. Any difference between denial causes is an information oracle."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const keys = ['denyBody_replay','denyBody_revoked','denyBody_malformed','denyBody_unknown'];",
+                  "const bodies = keys.map(k => pm.collectionVariables.get(k)).filter(b => b !== undefined && b !== '');",
+                  "pm.test('captured at least two denial bodies', () => pm.expect(bodies.length).to.be.above(1));",
+                  "pm.test('all denials are byte-identical', () => bodies.forEach(b => pm.expect(b).to.eql(bodies[0])));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "04 Audit",
+      "description": "Chain verification and scope. NOTE: the per-statement access-log endpoint the brief asks for does not exist in this API (see README, 'Findings'); verification of access events is via the audit chain, not a REST access-log resource.",
+      "item": [
+        {
+          "name": "Verify all chains (staff)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/audit/verify",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "audit",
+                "verify"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "Authorization",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "Bearer {{jwtStaff}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('all chains verified', () => pm.expect(b.verified).to.eql(true));",
+                  "pm.test('16 chains reported', () => pm.expect(b.chainsChecked).to.eql(16));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Verify — customer scope is 403",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/audit/verify",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "audit",
+                "verify"
+              ]
+            },
+            "description": "An ordinary customer token must not read the audit trail.",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "Authorization",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "Bearer {{jwtCustomerA}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Verify — no token is 401",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/audit/verify",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "audit",
+                "verify"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "05 Compliance — legal hold",
+      "description": "Place holds at both scopes (statement and customer), list active holds, release. Holds are what block erasure in folder 06.",
+      "item": [
+        {
+          "name": "Place statement-scoped hold (staff)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/statements/{{statementId}}/legal-holds",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "statements",
+                "{{statementId}}",
+                "legal-holds"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "Authorization",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "Bearer {{jwtStaff}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"litigation hold for review\",\n  \"caseReference\": \"CASE-POSTMAN-001\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => pm.response.to.have.status(201));",
+                  "const b = pm.response.json();",
+                  "pm.test('returns holdId', () => pm.expect(b).to.have.property('holdId'));",
+                  "if (b.holdId) pm.collectionVariables.set('holdId', b.holdId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Place customer-scoped hold (staff)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/customers/{{customerAId}}/legal-holds",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "customers",
+                "{{customerAId}}",
+                "legal-holds"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "Authorization",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "Bearer {{jwtStaff}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"customer-wide preservation\",\n  \"caseReference\": \"CASE-POSTMAN-002\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => pm.response.to.have.status(201));",
+                  "const b = pm.response.json();",
+                  "pm.test('returns holdId', () => pm.expect(b).to.have.property('holdId'));",
+                  "// Kept ACTIVE into folder 06, which proves the LEGAL_HOLD erasure block against it, then releases it.",
+                  "if (b.holdId) pm.collectionVariables.set('customerHoldId', b.holdId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Place hold — missing caseReference is 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/statements/{{statementId}}/legal-holds",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "statements",
+                "{{statementId}}",
+                "legal-holds"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "Authorization",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "Bearer {{jwtStaff}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"no case ref\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Place hold — customer scope is 403",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/statements/{{statementId}}/legal-holds",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "statements",
+                "{{statementId}}",
+                "legal-holds"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "Authorization",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "Bearer {{jwtCustomerA}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"x\",\n  \"caseReference\": \"CASE-X\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List active holds",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/legal-holds?active=true",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "legal-holds"
+              ],
+              "query": [
+                {
+                  "key": "active",
+                  "value": "true"
+                }
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "Authorization",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "Bearer {{jwtStaff}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "// Contract shape (OpenAPI): { holds: [...], cursor } - not { items }.",
+                  "pm.test('holds is an array', () => pm.expect(b.holds).to.be.an('array'));",
+                  "pm.test('carries a cursor field', () => pm.expect(b).to.have.property('cursor'));",
+                  "const ids = b.holds.map(h => h.id);",
+                  "pm.test('the statement-scoped hold is listed', () => pm.expect(ids).to.include(pm.collectionVariables.get('holdId')));",
+                  "pm.test('the customer-scoped hold is listed', () => pm.expect(ids).to.include(pm.collectionVariables.get('customerHoldId')));",
+                  "pm.test('both scopes present', () => {",
+                  "  const mine = b.holds.filter(h => ids.includes(h.id));",
+                  "  pm.expect(mine.some(h => h.statementId)).to.be.true;",
+                  "  pm.expect(mine.some(h => !h.statementId && h.customerId)).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Release the statement hold (staff)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/legal-holds/{{holdId}}",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "legal-holds",
+                "{{holdId}}"
+              ]
+            },
+            "description": "DELETE carries a body (ReleaseHoldRequest.releaseReason) - see README, 'Findings', the brief showed this route without one.",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "Authorization",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "Bearer {{jwtStaff}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"releaseReason\": \"review complete\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 or 204', () => pm.expect([200,204]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "06 Compliance — erasure",
+      "description": "Crypto-erasure lifecycle. Assertions are on the PAYLOAD - a bare 409 passes a status check and still fails the requirement, so the citations (reason, caseReference, basis, retainUntil) are asserted explicitly. DPO scope required.",
+      "item": [
+        {
+          "name": "Erasure blocked by active hold (dpo)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/customers/{{customerAId}}/erasure",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "customers",
+                "{{customerAId}}",
+                "erasure"
+              ]
+            },
+            "description": "With a customer hold from folder 05 in force, erasure is refused and CITES the hold.",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "Authorization",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "Bearer {{jwtDpo}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"POPIA s24 data-subject request\",\n  \"requestReference\": \"DSR-POSTMAN-01\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409', () => pm.response.to.have.status(409));",
+                  "const b = pm.response.json();",
+                  "pm.test('reason is LEGAL_HOLD', () => pm.expect(b.reason).to.eql('LEGAL_HOLD'));",
+                  "pm.test('cites caseReference', () => pm.expect(b.caseReference).to.be.a('string').and.not.empty);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Release the customer hold (staff)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/legal-holds/{{customerHoldId}}",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "legal-holds",
+                "{{customerHoldId}}"
+              ]
+            },
+            "description": "Releases the customer-scoped hold placed in 05 so the next request sees retention alone, and so a second run starts clean.",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "Authorization",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "Bearer {{jwtStaff}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"releaseReason\": \"review complete\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 or 204', () => pm.expect([200,204]).to.include(pm.response.code));",
+                  "pm.collectionVariables.unset('customerHoldId');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Erasure blocked inside statutory retention (dpo)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/customers/{{customerAId}}/erasure",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "customers",
+                "{{customerAId}}",
+                "erasure"
+              ]
+            },
+            "description": "No hold is active any more, so the only thing standing between the DPO and erasure is the statute. A bare 409 would pass a status assertion and fail the requirement, so the basis and the date are asserted.",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "Authorization",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "Bearer {{jwtDpo}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"POPIA s24 data-subject request\",\n  \"requestReference\": \"DSR-POSTMAN-01\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409', () => pm.response.to.have.status(409));",
+                  "const b = pm.response.json();",
+                  "pm.test('reason is STATUTORY_RETENTION', () => pm.expect(b.reason).to.eql('STATUTORY_RETENTION'));",
+                  "pm.test('409 cites the statutory basis', () => pm.expect(b.basis).to.be.a('string').and.not.empty);",
+                  "pm.test('409 cites retainUntil (a date)', () => pm.expect(String(b.retainUntil)).to.match(/^\\d{4}-\\d{2}-\\d{2}/));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Erasure — missing reason/reference is 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/customers/{{customerAId}}/erasure",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "customers",
+                "{{customerAId}}",
+                "erasure"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "Authorization",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "Bearer {{jwtDpo}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Erasure — staff (non-DPO) scope is 403",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/customers/{{customerAId}}/erasure",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "customers",
+                "{{customerAId}}",
+                "erasure"
+              ]
+            },
+            "description": "Erasure sits ABOVE the operator scope: audit.verify alone must not schedule it.",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "Authorization",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "Bearer {{jwtStaff}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"x\",\n  \"requestReference\": \"y\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Erasure — customer scope is 403",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/customers/{{customerAId}}/erasure",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "customers",
+                "{{customerAId}}",
+                "erasure"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "Authorization",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "Bearer {{jwtCustomerA}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"x\",\n  \"requestReference\": \"y\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cancel erasure during cooling-off (dpo)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/customers/{{customerAId}}/erasure",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "customers",
+                "{{customerAId}}",
+                "erasure"
+              ]
+            },
+            "description": "204 when a scheduled erasure is cancelled; 404 when none is scheduled. The brief expects 204 and the code returns exactly that (Results.NoContent), though the OpenAPI document mislabels it 200 - see README, 'Findings'.",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "Authorization",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "Bearer {{jwtDpo}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('204 or 404', () => pm.expect([204,404]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "07 Archive & restore",
+      "description": "The archived-statement download path: 409 with a working restoreEndpoint, then restore, poll, download. Needs a statement in ARCHIVED state - see README, 'Known limitations'.",
+      "item": [
+        {
+          "name": "Download link on archived statement is 409",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/statements/{{statementId}}/download-links?period={{statementPeriod}}",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "statements",
+                "{{statementId}}",
+                "download-links"
+              ],
+              "query": [
+                {
+                  "key": "period",
+                  "value": "{{statementPeriod}}"
+                }
+              ]
+            },
+            "description": "When the statement is ARCHIVED the link issue is a 409 carrying restoreEndpoint. On an AVAILABLE statement this is a 201 instead - both are asserted so the folder is honest whatever state the seed left.",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "Authorization",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "Bearer {{jwtCustomerA}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ttlSeconds\": 600\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 or 409', () => pm.expect([201,409]).to.include(pm.response.code));",
+                  "if (pm.response.code === 409) {",
+                  "  const b = pm.response.json();",
+                  "  pm.test('409 carries a restoreEndpoint', () => pm.expect(b).to.have.property('restoreEndpoint'));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Request restore",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/statements/{{statementId}}/restore?period={{statementPeriod}}",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "statements",
+                "{{statementId}}",
+                "restore"
+              ],
+              "query": [
+                {
+                  "key": "period",
+                  "value": "{{statementPeriod}}"
+                }
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "Authorization",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "Bearer {{jwtCustomerA}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 or 409', () => pm.expect([202,409]).to.include(pm.response.code));",
+                  "if (pm.response.code === 202) {",
+                  "  const b = pm.response.json();",
+                  "  pm.test('202 carries restoreId', () => pm.expect(b).to.have.property('restoreId'));",
+                  "  if (b.restoreId) pm.collectionVariables.set('restoreId', b.restoreId);",
+                  "} else {",
+                  "  // Not archived (409): nothing to poll - see README, Known limitations.",
+                  "  pm.collectionVariables.unset('restoreId');",
+                  "  pm.execution.setNextRequest('Create statement run (staff)');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Poll restore status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/statements/{{statementId}}/restore/{{restoreId}}",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "statements",
+                "{{statementId}}",
+                "restore",
+                "{{restoreId}}"
+              ]
+            },
+            "description": "Bounded poll: re-queues itself up to a few times until AVAILABLE, then moves on.",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "Authorization",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "Bearer {{jwtCustomerA}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('pollCount', (pm.variables.get('pollCount') || 0));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 or 404', () => pm.expect([200,404]).to.include(pm.response.code));",
+                  "let n = (pm.collectionVariables.get('restorePolls') || 0) * 1 + 1;",
+                  "pm.collectionVariables.set('restorePolls', n);",
+                  "const st = pm.response.code === 200 ? (pm.response.json().status || '') : '';",
+                  "if (st !== 'AVAILABLE' && n < 5) { setTimeout(()=>{}, 1000); pm.execution.setNextRequest('Poll restore status'); }"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "08 Operations",
+      "description": "Statement runs and reconciliation. Demonstrates run idempotency (same period -> same runId) and a clean reconciliation.",
+      "item": [
+        {
+          "name": "Create statement run (staff)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/statement-runs",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "statement-runs"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "Authorization",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "Bearer {{jwtStaff}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"periodStart\": \"2026-07-01\",\n  \"periodEnd\": \"2026-07-31\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 or 201', () => pm.expect([200,201]).to.include(pm.response.code));",
+                  "const b = pm.response.json();",
+                  "if (b.runId) pm.collectionVariables.set('runId', b.runId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create same run again — idempotent",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/statement-runs",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "statement-runs"
+              ]
+            },
+            "description": "Same period must return the SAME runId, not a second run.",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "Authorization",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "Bearer {{jwtStaff}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"periodStart\": \"2026-07-01\",\n  \"periodEnd\": \"2026-07-31\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 or 201', () => pm.expect([200,201]).to.include(pm.response.code));",
+                  "const b = pm.response.json();",
+                  "if (b.runId && pm.collectionVariables.get('runId'))",
+                  "  pm.test('same runId as first create', () => pm.expect(b.runId).to.eql(pm.collectionVariables.get('runId')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get run",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/statement-runs/{{runId}}",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "statement-runs",
+                "{{runId}}"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "Authorization",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "Bearer {{jwtStaff}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 or 404', () => pm.expect([200,404]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List run failures",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/statement-runs/{{runId}}/failures",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "statement-runs",
+                "{{runId}}",
+                "failures"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "Authorization",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "Bearer {{jwtStaff}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 or 404', () => pm.expect([200,404]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Retry quarantined failures (staff)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/statement-runs/{{runId}}/failures/retry",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "statement-runs",
+                "{{runId}}",
+                "failures",
+                "retry"
+              ]
+            },
+            "description": "Requeues every quarantined item in the run (all=true), or a specific set via itemIds. 200/204 on a real run; 404 when runId is unset on an unseeded stack.",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "Authorization",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "Bearer {{jwtStaff}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"all\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200/204/404', () => pm.expect([200,204,404]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Trigger reconciliation (staff)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/admin/reconciliation/run",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "admin",
+                "reconciliation",
+                "run"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "Authorization",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "Bearer {{jwtStaff}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 or 200', () => pm.expect([200,202]).to.include(pm.response.code));",
+                  "const b = pm.response.json();",
+                  "pm.test('returns runId', () => pm.expect(b).to.have.property('runId'));",
+                  "if (b.runId) pm.collectionVariables.set('reconciliationRunId', b.runId);",
+                  "pm.collectionVariables.set('reconciliationPolls', 0);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Latest reconciliation",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/admin/reconciliation/latest",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "admin",
+                "reconciliation",
+                "latest"
+              ]
+            },
+            "description": "/latest is the most recent COMPLETED run, and the retention worker picks a requested run up on its own cadence (~60 s), so this request re-queues itself until the run triggered above is the one it is reading. Reading it once would report the PREVIOUS run.",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "Authorization",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "Bearer {{jwtStaff}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 or 404 (none yet)', () => pm.expect([200,404]).to.include(pm.response.code));",
+                  "const want = pm.collectionVariables.get('reconciliationRunId');",
+                  "const b = pm.response.code === 200 ? pm.response.json() : {};",
+                  "const n = (pm.collectionVariables.get('reconciliationPolls') || 0) * 1 + 1;",
+                  "pm.collectionVariables.set('reconciliationPolls', n);",
+                  "if (want && b.runId !== want && n < 20) {",
+                  "  // Not our run yet: wait for the worker, then read again (bounded: 20 x 5 s).",
+                  "  setTimeout(() => {}, 5000);",
+                  "  pm.execution.setNextRequest('Latest reconciliation');",
+                  "} else {",
+                  "  pm.test('latest is the run triggered above', () => pm.expect(b.runId).to.eql(want));",
+                  "  pm.test('zero critical findings', () => pm.expect(b.criticalFindings || 0).to.eql(0));",
+                  "  pm.collectionVariables.unset('reconciliationRunId');",
+                  "  pm.collectionVariables.unset('reconciliationPolls');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "09 Security probes",
+      "description": "IDOR and scope. The property throughout: a resource you do not own is 404, never 403 - a 403 would confirm the resource exists. Plus the gateway's deliberate unauthenticated posture.",
+      "item": [
+        {
+          "name": "IDOR: B reads A's statements",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/customers/{{customerAId}}/statements?from=2020-01-01&to=2026-12-31&limit=10",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "customers",
+                "{{customerAId}}",
+                "statements"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "2020-01-01"
+                },
+                {
+                  "key": "to",
+                  "value": "2026-12-31"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                }
+              ]
+            },
+            "description": "Customer B's token against customer A's collection.",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "Authorization",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "Bearer {{jwtCustomerB}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 or 403 - and we assert the safe one', () => pm.expect([403,404]).to.include(pm.response.code));",
+                  "pm.test('is 404, never 403 (no existence oracle)', () => pm.expect(pm.response.code).to.eql(404));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "IDOR: B reads A's statement by id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/statements/{{statementId}}?period={{statementPeriod}}",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "statements",
+                "{{statementId}}"
+              ],
+              "query": [
+                {
+                  "key": "period",
+                  "value": "{{statementPeriod}}"
+                }
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "Authorization",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "Bearer {{jwtCustomerB}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404, never 403', () => pm.expect(pm.response.code).to.eql(404));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Scope: customer hits staff endpoint",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/audit/verify",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "audit",
+                "verify"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "Authorization",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "Bearer {{jwtCustomerA}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Scope: customer hits DPO endpoint",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/customers/{{customerAId}}/erasure",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "customers",
+                "{{customerAId}}",
+                "erasure"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "Authorization",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "Bearer {{jwtCustomerA}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"x\",\n  \"requestReference\": \"y\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "No auth on Delivery.Api is 401",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{deliveryUrl}}/v1/customers/{{customerAId}}/statements?from=2020-01-01&to=2026-12-31",
+              "host": [
+                "{{deliveryUrl}}"
+              ],
+              "path": [
+                "v1",
+                "customers",
+                "{{customerAId}}",
+                "statements"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "2020-01-01"
+                },
+                {
+                  "key": "to",
+                  "value": "2026-12-31"
+                }
+              ]
+            },
+            "description": "A protected Delivery.Api route with no Authorization header."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "No auth on the gateway is 404",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/v1/d/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "v1",
+                "d",
+                "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+              ]
+            },
+            "description": "The gateway is deliberately unauthenticated - the token IS the credential - so an unknown token is a 404, not a 401."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 (gateway is unauthenticated by design)', () => pm.expect([404]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Collection pre-request: fail fast if the API is down, then mint the four dev JWTs in-band.",
+          "// The dev-token endpoint (/v1/dev/tokens) signs with the stack's own key, so a fresh clone needs",
+          "// no side quest - but the endpoint is Development-only, and the tokens carry sub = customerId.",
+          "const CUSTOMER_A = pm.collectionVariables.get('customerAId') || '11111111-1111-1111-1111-111111111111';",
+          "const CUSTOMER_B = pm.collectionVariables.get('customerBId') || '22222222-2222-2222-2222-222222222222';",
+          "pm.collectionVariables.set('customerAId', CUSTOMER_A);",
+          "pm.collectionVariables.set('customerBId', CUSTOMER_B);",
+          "",
+          "const delivery = pm.collectionVariables.get('deliveryUrl');",
+          "",
+          "function mint(customerId, query, envKey, done) {",
+          "  if (pm.collectionVariables.get(envKey)) { return done(); }   // already set - never re-mint",
+          "  pm.sendRequest({",
+          "    url: `${delivery}/v1/dev/tokens?customerId=${customerId}${query}`,",
+          "    method: 'POST'",
+          "  }, (err, res) => {",
+          "    if (err) { console.error(`mint ${envKey} failed: ${err}`); return done(); }",
+          "    if (res.code !== 200) {",
+          "      console.error(`mint ${envKey} returned ${res.code}. Is the API in Development? ${res.text()}`);",
+          "      return done();",
+          "    }",
+          "    pm.collectionVariables.set(envKey, res.json().accessToken);",
+          "    done();",
+          "  });",
+          "}",
+          "",
+          "// Chain them so the requests complete before the actual request runs.",
+          "mint(CUSTOMER_A, '', 'jwtCustomerA', () =>",
+          "  mint(CUSTOMER_B, '', 'jwtCustomerB', () =>",
+          "    mint(CUSTOMER_A, '&staff=true', 'jwtStaff', () =>",
+          "      // DPO scope stacks ON staff: the endpoint only adds erasure.execute when BOTH flags are set.",
+          "      mint(CUSTOMER_A, '&staff=true&dpo=true', 'jwtDpo', () => {}))));"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Applied to EVERY response: nothing internal may leak, and every error must carry a traceId.",
+          "const leaks = [/at [A-Za-z0-9_.]+\\(/, /SELECT .* FROM /i, /Npgsql/, /Host=[^;]+;\\s*Port=/i,",
+          "               /storage_key/, /wrapped_dek/, /kek_id/];",
+          "const text = pm.response.text();",
+          "pm.test('no internal detail in response', function () {",
+          "  leaks.forEach(re => pm.expect(text, `leak: ${re}`).to.not.match(re));",
+          "});",
+          "",
+          "// traceId is a promise of Delivery.Api's problem+json errors. Two deliberate exceptions:",
+          "//  - the gateway's 404 is BYTE-IDENTICAL across every denial (ADR-0015/16); a per-request",
+          "//    traceId would make each one distinguishable, so it carries none (folder 03 proves this).",
+          "//  - the erasure 409 is a decision payload ({reason, basis, retainUntil, ...}, application/json),",
+          "//    not a problem document; folder 06 asserts its fields directly.",
+          "const ct = pm.response.headers.get('content-type') || '';",
+          "const gateway = pm.collectionVariables.get('gatewayUrl') || '';",
+          "const isGateway = gateway && pm.request.url.toString().startsWith(gateway);",
+          "if (pm.response.code >= 400 && ct.includes('problem+json') && !isGateway) {",
+          "  pm.test('error carries a traceId', function () {",
+          "    pm.expect(pm.response.json()).to.have.property('traceId');",
+          "  });",
+          "}"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "deliveryUrl",
+      "value": "http://localhost:5081",
+      "type": "string"
+    },
+    {
+      "key": "gatewayUrl",
+      "value": "http://localhost:8082",
+      "type": "string"
+    },
+    {
+      "key": "ledgerUrl",
+      "value": "http://localhost:8083",
+      "type": "string"
+    },
+    {
+      "key": "jwtCustomerA",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "jwtCustomerB",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "jwtStaff",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "jwtDpo",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "customerAId",
+      "value": "01a06c3e-a989-7df3-a158-2a216d0bef34",
+      "type": "string"
+    },
+    {
+      "key": "customerBId",
+      "value": "01a06c3e-a98a-7642-8d4e-81618a2fc4fd",
+      "type": "string"
+    },
+    {
+      "key": "statementId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "statementPeriod",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "linkId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "downloadUrl",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "holdId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "customerHoldId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "runId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "reconciliationRunId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "restoreId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "nextCursor",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "denyBody_replay",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "denyBody_revoked",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "denyBody_malformed",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "denyBody_unknown",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}

@@ -54,6 +54,17 @@ and it is written up in [ADR-0001](docs/adr/0001-microservices-over-modular-mono
 
 ## Quickstart
 
+**Before you start.** You need Docker with Compose v2 (`docker compose`, not `docker-compose`).
+On Windows, Docker Desktop must be in Linux-container mode (the WSL 2 backend is the default).
+Every image is published for both amd64 and arm64, so Apple Silicon runs native, with no
+emulation. Budget about 4.5 GB of disk for images and build cache; the running stack uses about
+half a gigabyte of RAM, well inside Docker Desktop's defaults. The first build compiles six .NET
+images from source and takes **3–5 minutes** on a four-core laptop; later starts take seconds.
+The shell examples below are bash (Git Bash on Windows works; in PowerShell, `curl` is an alias
+for `Invoke-WebRequest`, so use `curl.exe`). Nothing else is needed to run the stack. The .NET
+10 SDK (`global.json` pins 10.0.400) is required only for [running the tests](#running-the-tests)
+and seeding; `jq` only for the pretty-printed examples.
+
 ```bash
 git clone https://github.com/NWF007/statement-delivery-system.git
 cd statement-delivery-system
@@ -65,6 +76,24 @@ That is the whole procedure. No manual steps, no seeding, no waiting and retryin
 dependency declares a health check, the migrator runs once and gates everything behind it, and
 the services start only after it exits `0`.
 
+**What success looks like.** Thirteen containers start; **three of them exit `0` on purpose** and
+stay exited. They are one-shot init jobs, and an `Exited (0)` beside any of them is the expected
+state, not a failure:
+
+| One-shot container | What it did before exiting |
+| --- | --- |
+| `pgbouncer-config` | Wrote PgBouncer's auth file from `.env`, so no password is committed |
+| `db-migrator` | Applied all 24 migrations directly against PostgreSQL |
+| `createbuckets` | Created the `statements` bucket with Object Lock (COMPLIANCE, 2555 days) |
+
+The other ten show `Up ... (healthy)` (`aspire-dashboard` and `mockledger` show plain `Up`; they
+have no health check). Each service also logs one warning at startup that no read replica is
+configured and eventual reads fall back to the primary. That is intentional in local development;
+see the read/write split section below. If a port is already taken you get a plain
+`Bind for 0.0.0.0:5432 failed: port is already allocated`; every host port is a variable in `.env`
+(`POSTGRES_PORT`, `REDIS_PORT`, `MINIO_API_PORT`, `DELIVERY_API_PORT`, ...), so change the one that
+clashes and run `up` again.
+
 | What | Where |
 | --- | --- |
 | Delivery API (authenticated) | <http://localhost:8081> |
@@ -72,18 +101,29 @@ the services start only after it exits `0`.
 | Download Gateway (public) | <http://localhost:8082> |
 | Aspire Dashboard — traces, metrics, logs | <http://localhost:18888> |
 | MinIO Console | <http://localhost:9001> |
+| Mock core-banking ledger | <http://localhost:8083> |
 | PostgreSQL (direct — migrator only) | `localhost:5432` |
 | PgBouncer (what services actually use) | `localhost:6432` |
 
 Verify it:
 
 ```bash
-docker compose ps db-migrator                  # Exited (0)
+docker compose ps -a db-migrator               # Exited (0) - one-shot; hidden without -a
 curl -f http://localhost:8081/health/live      # process is alive
 curl -f http://localhost:8081/health/ready     # dependencies are reachable
 curl -f http://localhost:8082/health/live
 curl -f http://localhost:8082/health/ready
 curl -s http://localhost:8081/ping | jq        # service, version, environment, utcNow
+```
+
+The same checks from Windows PowerShell, where `curl` is an alias for `Invoke-WebRequest` and
+`jq` is usually absent:
+
+```powershell
+docker compose ps -a db-migrator
+curl.exe -f http://localhost:8081/health/ready
+curl.exe -f http://localhost:8082/health/ready
+Invoke-RestMethod http://localhost:8081/ping   # same JSON, rendered as a PowerShell object
 ```
 
 Then open <http://localhost:18888> and confirm all four services are reporting traces, metrics and
@@ -346,6 +386,18 @@ Docker-capable host, and each table states its provenance.
 dotnet test                            # everything; integration tests skip without Docker
 ```
 
+Needs the .NET 10 SDK on the host (`global.json` pins 10.0.400). Without a reachable Docker
+daemon the integration project reports **14 passed, 163 skipped**; that is the expected shape,
+not a broken run. The 163 need Testcontainers and run automatically when Docker is available.
+
+No SDK on the host? The build image runs the fast suites unchanged (the integration suite needs
+the Docker socket as well, so run that one on the host):
+
+```bash
+docker run --rm -v "$PWD:/src" -w /src mcr.microsoft.com/dotnet/sdk:10.0.400 \
+  dotnet test --project tests/UnitTests/UnitTests.csproj
+```
+
 Per suite:
 
 ```bash
@@ -380,9 +432,13 @@ Two things that will otherwise cost you an afternoon:
 ### Seeding volume
 
 ```bash
-Postgres__PrimaryConnectionString='Host=localhost;Port=6432;Database=statements_generation;Username=app_generation;Password=...' \
+set -a; . ./.env; set +a     # the password is APP_GENERATION_PASSWORD from .env
+Postgres__PrimaryConnectionString="Host=localhost;Port=6432;Database=statements_generation;Username=app_generation;Password=$APP_GENERATION_PASSWORD" \
 dotnet run --project tools/seed -- --customers 100000 --months 24
 ```
+
+Goes through PgBouncer as the generation role, the same route the worker uses; nothing here
+needs the `postgres` superuser. `scripts/seed-demo.sh` does this for you.
 
 Writes ~2.4M rows through Npgsql binary COPY, pre-creating every daily partition it needs, then
 runs `ANALYZE` so the `EXPLAIN` output that goes into `docs/SCALE.md` means something.
@@ -395,7 +451,7 @@ runs `ANALYZE` so the `EXPLAIN` output that goes into `docs/SCALE.md` means some
 | `src/BuildingBlocks/Domain/` | Pure domain: statements, retention decision engine, audit chain definition. References nothing |
 | `src/BuildingBlocks/Persistence/` | Intent-routed connections, repositories, leases, audit writer/verifier. Read its README before writing SQL |
 | `src/BuildingBlocks/Crypto/` | SDP1 framed AEAD, the key hierarchy, the DEK cache |
-| `src/Migrations/` | Forward-only DbUp scripts, V001–V022, with the locking rules in `Scripts/README.md` |
+| `src/Migrations/` | Forward-only DbUp scripts, V001–V024, with the locking rules in `Scripts/README.md` |
 | `docs/` | THREAT-MODEL, SCALE, COST, LIMITATIONS, DEMO, and `adr/` (index: [docs/adr/README.md](docs/adr/README.md)) |
 | `load/` | k6 scenarios + the seed/export recipe |
 | `tests/` | Unit / Architecture / Security / Integration — the split the CI badge runs |
