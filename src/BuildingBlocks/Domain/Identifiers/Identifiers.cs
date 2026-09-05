@@ -4,8 +4,9 @@ using StatementDelivery.Domain.Abstractions;
 namespace StatementDelivery.Domain.Identifiers;
 
 /// <summary>
-/// Contract shared by every strongly-typed identifier, so that one generic JSON converter and one
-/// generic Dapper handler can serve all of them.
+/// Contract shared by every strongly-typed identifier, so that one generic JSON converter can
+/// serve all of them. Dapper parameters are still unwrapped by hand (<c>id.Value</c>) at each call
+/// site; there is no generic type handler, deliberately, so a query's parameter shape stays visible.
 /// </summary>
 /// <typeparam name="TSelf">The concrete identifier type.</typeparam>
 public interface IStronglyTypedId<TSelf>

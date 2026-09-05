@@ -77,9 +77,10 @@ return 0;
 /// Entry point marker.
 /// </summary>
 /// <remarks>
-/// Top-level statements generate an INTERNAL Program class, which WebApplicationFactory cannot
-/// reach from a test assembly. Declaring it public here is the standard way to make the real
-/// application - its real authentication, its real routing, its real DI graph - testable end to
-/// end. Testing a hand-assembled copy of the pipeline instead would prove only that the copy works.
+/// Top-level statements generate an INTERNAL Program class, which a test assembly cannot name.
+/// Declaring it public keeps the real application - its real authentication, routing and DI
+/// graph - reachable by a <c>WebApplicationFactory&lt;Program&gt;</c>. No test targets it yet: the
+/// integration factories point at options types instead. It stays so the first full-stack test
+/// does not have to start by editing the entry point.
 /// </remarks>
 public partial class Program;
