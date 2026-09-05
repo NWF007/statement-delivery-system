@@ -289,7 +289,10 @@ dotnet_naming_rule.parameters_and_locals_are_camel_case.style = camel_case
 # scaffold logs only at startup and on diagnostic paths. Revisit when the delivery hot
 # path starts logging per request.
 dotnet_diagnostic.CA1848.severity = suggestion
-# CA2007 does not apply: ASP.NET Core has no synchronisation context.
+# CA2007 is off. ASP.NET Core has no synchronisation context, so the analyzer buys nothing for
+# the services, and enabling it for the building blocks flags every `await using` declaration
+# (62 of them) whose implicit DisposeAsync cannot take ConfigureAwait without restructuring.
+# ConfigureAwait(false) in src/ is therefore a CONVENTION for new code, not an enforced rule.
 dotnet_diagnostic.CA2007.severity = none
 
 [tests/**/*.cs]

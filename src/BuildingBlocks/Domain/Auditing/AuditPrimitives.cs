@@ -298,6 +298,12 @@ public sealed record AuditEvent(
 /// <param name="ChainId">The chain the record landed in.</param>
 /// <param name="Seq">Its position in that chain.</param>
 /// <param name="Hash">Its hash. Quote this to prove the record existed at this position.</param>
+/// <remarks>
+/// EQUALITY IS BY REFERENCE ON <see cref="Hash"/>. A record struct compares a <c>byte[]</c> member by
+/// reference, so two receipts for the same append are not equal. Nothing compares receipts today;
+/// if something starts to, compare <see cref="HashHex"/> or restructure as four words like
+/// <c>TokenHash</c>.
+/// </remarks>
 public readonly record struct AuditReceipt(short ChainId, long Seq, byte[] Hash)
 {
     /// <summary>Gets the hash in lower-case hexadecimal, for logging and support tickets.</summary>
