@@ -7,17 +7,16 @@ in compose, then drive it from Postman and follow a request through the code.
 
 ```bash
 docker compose up -d --wait
-./scripts/seed-demo.sh          # 25 customers + one real generation run for last month
+docker compose ps -a seed-demo   # the stack seeds itself; wait for Exited (0)
 ```
 
-The script needs `jq` or `python` on the host. Without either, do its two data steps by hand:
+The same seed can be run from the host against the compose stack, which is useful after
+`SEED_DEMO=false` or when iterating on the seed tool itself:
 
 ```bash
 set -a; . ./.env; set +a
 Postgres__PrimaryConnectionString="Host=localhost;Port=6432;Database=statements_generation;Username=app_generation;Password=$APP_GENERATION_PASSWORD" \
-  dotnet run --project tools/seed -c Release -- --customers 25 --months 3 --seed 7
-# then, in Postman, folder "08 Operations" > "Create statement run" for last month, and wait for
-# GET /v1/statement-runs/{runId} to report COMPLETED (about a minute).
+  dotnet run --project tools/seed -- --demo        # waits for readiness, seeds, runs generation, prints the ids
 ```
 
 ## 2. Run the service on the host

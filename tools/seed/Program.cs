@@ -63,6 +63,30 @@ var seedKek = new Lazy<byte[]>(SeedKekBytes);
 DateOnly today = DateOnly.FromDateTime(DateTime.UtcNow);
 StatementPeriod newest = StatementPeriod.ForMonth(today.Year, today.Month).Previous();
 
+// ---------------------------------------------------------------------------------------------
+// Demo mode (see DemoRun). The volume seed below is a bulk COPY and is not idempotent, so when
+// its marker rows already exist the counts are zeroed and the loops write nothing; the demo
+// customers and the generation run are idempotent on their own.
+// ---------------------------------------------------------------------------------------------
+using var api = new HttpClient { BaseAddress = new Uri(options.ApiUrl), Timeout = TimeSpan.FromSeconds(30) };
+
+if (options.Demo)
+{
+    if (string.Equals(Environment.GetEnvironmentVariable("SEED_DEMO"), "false", StringComparison.OrdinalIgnoreCase))
+    {
+        DemoLog.DisabledByEnvironment(logger);
+        return 0;
+    }
+
+    await DemoRun.WaitForApiAsync(api, logger, CancellationToken.None).ConfigureAwait(false);
+
+    if (await DemoRun.AlreadySeededAsync(connections, options.Seed, CancellationToken.None).ConfigureAwait(false))
+    {
+        DemoLog.AlreadySeeded(logger);
+        options = options with { Customers = 0 };
+    }
+}
+
 SeedLog.Starting(logger, options.Customers, options.Months, options.ApproximateStatements, options.Seed);
 
 // ---------------------------------------------------------------------------------------------
@@ -181,6 +205,14 @@ await using (NpgsqlConnection connection = await connections.OpenAsync(Connectio
 }
 
 SeedLog.Analyzed(logger);
+
+if (options.Demo)
+{
+    await DemoRun.EnsureDemoCustomersAsync(connections, logger, CancellationToken.None).ConfigureAwait(false);
+    await DemoRun.GenerateAsync(api, newest, logger, CancellationToken.None).ConfigureAwait(false);
+    await DemoRun.PrintAsync(connections, newest, CancellationToken.None).ConfigureAwait(false);
+}
+
 return 0;
 
 async IAsyncEnumerable<T> ToAsync<T>(IEnumerable<T> source)
@@ -196,10 +228,12 @@ async IAsyncEnumerable<StatementRow> GenerateStatements(IEnumerable<AccountRow> 
 {
     foreach (AccountRow account in forAccounts)
     {
-        // A dormant account stops producing statements partway through the window.
-        int months = account.Status == "DORMANT"
-            ? random.Next(1, Math.Max(2, options.Months / 2))
-            : options.Months;
+        // A dormant account stops producing statements partway through the window. Zero months
+        // (demo mode) means no statement rows at all, dormant or not.
+        int months = options.Months == 0 ? 0
+            : account.Status == "DORMANT"
+                ? random.Next(1, Math.Max(2, options.Months / 2))
+                : options.Months;
 
         StatementPeriod period = newest;
 

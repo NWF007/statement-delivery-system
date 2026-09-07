@@ -7,16 +7,15 @@ next to it.
 
 ## Setup
 
-Needs, on the host: Docker with Compose v2, bash, `curl`, `jq`, and the .NET 10 SDK
-(`global.json` pins 10.0.400; the seed tool is a .NET project). The seed step reads its database
-credentials from `.env`; nothing has to be exported by hand.
+Needs, on the host: Docker with Compose v2, bash, `curl` and `jq`. Nothing else: the stack seeds
+its own demo data (the one-shot `seed-demo` container) and mints its own tokens.
 
 ```bash
 docker compose up --build -d
-./scripts/seed-demo.sh          # ~1 minute: seeds 25 customers, runs REAL generation for last month
+docker compose ps -a seed-demo    # wait for "Exited (0)": the stack seeds itself, about a minute after the services are healthy
 ```
 
-The script is safe to re-run (an already-seeded database is detected and skipped). It always
+The seed is idempotent (an already-seeded database is detected and skipped). It always
 creates ten demo customers with fixed ids, `11111111-1111-1111-1111-111111111101` through `…110`,
 and the generation run produces last month's statement for each. This tour uses the first two.
 Mint two tokens, then read the first customer's statement id and period from the API:
@@ -25,17 +24,17 @@ Mint two tokens, then read the first customer's statement id and period from the
 export API=http://localhost:8081 GW=http://localhost:8082
 export CUSTOMER_ID=11111111-1111-1111-1111-111111111101
 export OTHER_CUSTOMER_ID=11111111-1111-1111-1111-111111111102
-export TOKEN=$(./scripts/demo-token.sh "$CUSTOMER_ID")           # that customer
-export STAFF=$(./scripts/demo-token.sh "$CUSTOMER_ID" staff)     # plus the operator scope
+export TOKEN=$(curl -fsS -X POST "$API/v1/dev/tokens?customerId=$CUSTOMER_ID" | jq -r .accessToken)              # that customer
+export STAFF=$(curl -fsS -X POST "$API/v1/dev/tokens?customerId=$CUSTOMER_ID&staff=true" | jq -r .accessToken)   # plus the operator scope
 LIST=$(curl -fsS "$API/v1/customers/$CUSTOMER_ID/statements?from=$(( $(date +%Y) - 1 ))-01-01&to=$(date +%Y-%m-%d)" \
   -H "Authorization: Bearer $TOKEN")
 export STATEMENT_ID=$(echo "$LIST" | jq -r '.items[0].id')
 export PERIOD=$(echo "$LIST" | jq -r '.items[0].period.start')
 ```
 
-The script also prints every demo customer's statement id at the end, if you would rather paste.
+`docker compose logs seed-demo` ends with every demo customer's statement id, if you would rather paste.
 
-`demo-token.sh` calls the API's own `POST /v1/dev/tokens`, which exists only in the Development
+`POST /v1/dev/tokens` (a `GET` works too, for a browser) exists only in the Development
 environment; the signing key never leaves the service.
 
 ## 1. The happy path (2 min)
@@ -82,7 +81,7 @@ reason is preserved in the audit trail, not in the response.
 
 ```bash
 # The second demo customer's statement, fetched with THEIR token, then requested with OURS
-OTHER_TOKEN=$(./scripts/demo-token.sh "$OTHER_CUSTOMER_ID")
+OTHER_TOKEN=$(curl -fsS -X POST "$API/v1/dev/tokens?customerId=$OTHER_CUSTOMER_ID" | jq -r .accessToken)
 OTHER=$(curl -fsS "$API/v1/customers/$OTHER_CUSTOMER_ID/statements?from=$PERIOD&to=$(date +%Y-%m-%d)" \
   -H "Authorization: Bearer $OTHER_TOKEN" | jq -r '.items[0].id')
 curl -s -o /dev/null -w '%{http_code}\n' \
@@ -118,7 +117,7 @@ versioned, backed up - becomes unreadable at once.
 
 ```bash
 # 5a. Inside the retention window: refused, WITH the statute (erasure needs the DPO scope)
-export DPO=$(./scripts/demo-token.sh "$CUSTOMER_ID" dpo)
+export DPO=$(curl -fsS -X POST "$API/v1/dev/tokens?customerId=$CUSTOMER_ID&staff=true&dpo=true" | jq -r .accessToken)
 curl -s -X POST "$API/v1/customers/$CUSTOMER_ID/erasure" \
   -H "Authorization: Bearer $DPO" \
   -H 'Content-Type: application/json' -d '{"reason":"POPIA s24","requestReference":"DSR-DEMO-1"}' | jq
@@ -170,7 +169,7 @@ issue → redeem → consume → decrypt → stream, with the database spans ins
 
 - `docker compose logs delivery-api --tail 50`
 - `curl $API/health/ready | jq` - names the failing dependency
-- The seed script can be re-run at any time; it skips the seed step when the 25 customers already
+- The seed runs on every `docker compose up` and skips itself when the customers already
   exist, and run creation is idempotent per period (a repeat request returns the same `runId`).
 - To start over from nothing: `docker compose down -v`, then `up` and the seed script again.
 - After section 5 the demo customer's key is gone for good. Pick another `CUSTOMER_ID` from the

@@ -62,12 +62,13 @@ and it is written up in [ADR-0001](docs/adr/0001-microservices-over-modular-mono
 On Windows, Docker Desktop must be in Linux-container mode (the WSL 2 backend is the default).
 Every image is published for both amd64 and arm64, so Apple Silicon runs native, with no
 emulation. Budget about 4.5 GB of disk for images and build cache; the running stack uses about
-half a gigabyte of RAM, well inside Docker Desktop's defaults. The first build compiles six .NET
+half a gigabyte of RAM, well inside Docker Desktop's defaults. The first build compiles seven .NET
 images from source and takes **3–5 minutes** on a four-core laptop; later starts take seconds.
 The shell examples below are bash (Git Bash on Windows works; in PowerShell, `curl` is an alias
-for `Invoke-WebRequest`, so use `curl.exe`). Nothing else is needed to run the stack. The .NET
-10 SDK (`global.json` pins 10.0.400) is required only for [running the tests](#running-the-tests)
-and seeding; `jq` for the five-minute walkthrough below.
+for `Invoke-WebRequest`, so use `curl.exe`). Nothing else is needed to run the stack or the
+walkthrough: demo data is seeded by the stack itself, tokens come from the API, and the bash
+walkthrough uses `jq` while the PowerShell one needs nothing extra. The .NET 10 SDK
+(`global.json` pins 10.0.400) is required only for [running the tests](#running-the-tests).
 
 ```bash
 git clone https://github.com/NWF007/statement-delivery-system.git
@@ -76,12 +77,13 @@ cp .env.example .env
 docker compose up --build
 ```
 
-That is the whole procedure. No manual steps, no seeding, no waiting and retrying: every
-dependency declares a health check, the migrator runs once and gates everything behind it, and
-the services start only after it exits `0`.
+That is the whole procedure. No manual steps, no waiting and retrying: every dependency declares
+a health check, the migrator runs once and gates everything behind it, the services start only
+after it exits `0`, and once they are healthy a one-shot job seeds demo data and drives one real
+generation run, so the stack comes up with statements to download.
 
-**What success looks like.** Thirteen containers start; **three of them exit `0` on purpose** and
-stay exited. They are one-shot init jobs, and an `Exited (0)` beside any of them is the expected
+**What success looks like.** Fourteen containers start; **four of them exit `0` on purpose** and
+stay exited. They are one-shot jobs, and an `Exited (0)` beside any of them is the expected
 state, not a failure:
 
 | One-shot container | What it did before exiting |
@@ -89,6 +91,7 @@ state, not a failure:
 | `pgbouncer-config` | Wrote PgBouncer's auth file from `.env`, so no password is committed |
 | `db-migrator` | Applied all 24 migrations directly against PostgreSQL |
 | `createbuckets` | Created the `statements` bucket with Object Lock (COMPLIANCE, 2555 days) |
+| `seed-demo` | Last, after every service was healthy: seeded 35 customers and ran last month's generation for them (about a minute; `SEED_DEMO=false` in `.env` skips it) |
 
 The other ten show `Up ... (healthy)` (`aspire-dashboard` and `mockledger` show plain `Up`; they
 have no health check). Each service also logs one warning at startup that no read replica is
@@ -136,30 +139,30 @@ that is the point of the correlation wiring.
 
 ### See it work in five minutes
 
-The stack is up. Now watch a single-use link get consumed. This part needs the .NET 10 SDK on the
-host (the seed tool is a .NET project) and either bash with `jq`, or PowerShell (no `jq`; the
-variant is below the bash one). There is no need to wait after `up`: the seed script polls both
-readiness endpoints itself before it does anything.
+The stack is up, and the `seed-demo` container has already done the seeding: wait for it to show
+`Exited (0)` in `docker compose ps -a` (about a minute after the services turn healthy; its log,
+`docker compose logs seed-demo`, ends with the ten customer ids). Nothing here needs the SDK or a
+script. The bash version uses `curl` and `jq`; the PowerShell version further down needs nothing
+extra.
 
-```bash
-./scripts/seed-demo.sh          # ~1 minute: 35 customers, then a REAL generation run for last month
-```
+The seed is thirty-five customers, of two kinds. Twenty-five come from the volume seed tool with
+random ids, for a catalogue that is not empty. The other **ten are demo customers with fixed,
+documented ids**, `11111111-1111-1111-1111-111111111101` through `…110`, each with one account,
+and the generation run produces last month's statement for every one of them. The walkthrough
+below uses the first; any of the ten works the same way.
 
-Thirty-five customers, of two kinds. Twenty-five come from the volume seed tool with random ids,
-for a catalogue that is not empty. The other **ten are demo customers with fixed, documented ids**,
-`11111111-1111-1111-1111-111111111101` through `…110`, each with one account, and the generation
-run produces last month's statement for every one of them. Nothing needs to be copied out of the
-script's output; the walkthrough below uses the first, and any of the ten works the same way.
-Mint a token for that customer:
+Every authenticated call needs a JWT, and the API mints one itself in the Development
+environment: `POST /v1/dev/tokens?customerId=…` (a plain `GET` of the same URL works too, so it
+can be opened in a browser). `&staff=true` adds the operator scope, `&staff=true&dpo=true` the
+erasure scope. Mint one for the first demo customer:
 
 ```bash
 export API=http://localhost:8081
 export CUSTOMER_ID=11111111-1111-1111-1111-111111111101     # ...101 to ...110 all exist
-TOKEN=$(./scripts/demo-token.sh "$CUSTOMER_ID")           # a one-hour dev JWT, minted by the API
+TOKEN=$(curl -fsS -X POST "$API/v1/dev/tokens?customerId=$CUSTOMER_ID" | jq -r .accessToken)   # one hour
 ```
 
-`demo-token.sh` calls `POST /v1/dev/tokens`, an endpoint that exists only in the Development
-environment. Every authenticated call below carries that token:
+Then:
 
 ```bash
 # 1. The customer's catalogue (the date range is mandatory; it is what prunes partitions)
@@ -195,7 +198,7 @@ The same five steps from PowerShell, with no `jq`:
 ```powershell
 $API = "http://localhost:8081"
 $CUSTOMER_ID = "11111111-1111-1111-1111-111111111101"
-$TOKEN = .\scripts\demo-token.ps1 $CUSTOMER_ID
+$TOKEN = (Invoke-RestMethod -Method Post "$API/v1/dev/tokens?customerId=$CUSTOMER_ID").accessToken
 $H = @{ Authorization = "Bearer $TOKEN" }
 $from = "{0}-01-01" -f ((Get-Date).Year - 1); $to = Get-Date -Format yyyy-MM-dd
 
@@ -551,7 +554,9 @@ point it at the `postgres` superuser through 6432: that account is deliberately 
 PgBouncer's userlist, so PgBouncer answers `SASL authentication failed`; the superuser only ever
 connects directly on 5432, and only the migrator needs it. The seed is a bulk COPY and is **not
 idempotent**: a second run fails on the customer unique constraint. `docker compose down -v`
-first, or use `scripts/seed-demo.sh`, which detects an earlier seed and skips it.
+first. The demo seed the stack runs on `up` is the same tool in `--demo` mode
+(`dotnet run --project tools/seed -- --demo` does it from a host, against `localhost:8081`); it
+detects an earlier seed and skips it, so it is safe to repeat.
 
 Writes ~2.4M rows through Npgsql binary COPY, pre-creating every daily partition it needs, then
 runs `ANALYZE` so the `EXPLAIN` output that goes into `docs/SCALE.md` means something.
@@ -568,6 +573,5 @@ runs `ANALYZE` so the `EXPLAIN` output that goes into `docs/SCALE.md` means some
 | `docs/` | THREAT-MODEL, SCALE, COST, LIMITATIONS, DEMO, and `adr/` (index: [docs/adr/README.md](docs/adr/README.md)) |
 | `load/` | k6 scenarios + the seed/export recipe |
 | `tests/` | Unit / Architecture / Security / Integration — the split the CI badge runs |
-| `tools/seed` | Deterministic volume seeding for the SCALE work |
-| `scripts/` | `seed-demo.sh` (demo data through the real pipeline), `demo-token.sh` / `.ps1` (a dev JWT) |
+| `tools/seed` | Deterministic volume seeding for the SCALE work; `--demo` is what the `seed-demo` container runs on `up` |
 | `docs/DEMO.md` | The guided walkthrough that the five-minute path above starts |

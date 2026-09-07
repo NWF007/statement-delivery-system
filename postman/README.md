@@ -35,7 +35,7 @@ tools/postman/
 
   ```bash
   docker compose up --detach --wait
-  ./scripts/seed-demo.sh            # prints a CUSTOMER_ID / STATEMENT_ID / PERIOD
+  docker compose logs seed-demo     # the stack seeds itself on up; the log ends with the demo CUSTOMER_IDs / STATEMENT_IDs
   ```
 
 - Both services in **Development** environment — the in-band token mint (`/v1/dev/tokens`) is
@@ -166,23 +166,20 @@ alongside the console output.
   worker does this on its schedule, or archive one by hand for the demo).
 - **The uniform-denial assertion (03)** compares whatever denial bodies were captured in that run;
   it needs at least the malformed and unknown cases to have executed against the gateway.
-- **`scripts/seed-demo.sh` leaves rows that fail two of the folders.** Its step 2 (the seed tool)
-  writes statement rows whose `storage_key` points at objects that were never uploaded — right
-  for benchmarks, and the script says so — and step 3 then *adds* generated statements rather
-  than filling those in. Against that dataset: (a) the customer-scoped hold in 05 is a **500**
+- **Seed-only statement rows fail two of the folders.** The demo seed the stack runs on `up` (the
+  seed tool in `--demo` mode) writes customers and accounts only and lets the generation run
+  produce every statement, so it leaves none. A VOLUME seed (`--months` of 1 or more) does write
+  statement rows whose `storage_key` points at objects that were never uploaded - right for a
+  benchmark - and against that dataset: (a) the customer-scoped hold in 05 is a **500**
   (`NoSuchKey` while setting the object hold on a row with no object), and (b) reconciliation in
   08 reports one `MISSING_OBJECT` critical per seed-only row. Both are the API telling the truth
-  about the data, not collection bugs. For a clean run, prune the rows that no generation run
-  produced:
+  about the data, not collection bugs. For a clean run after a volume seed, prune the rows that
+  no generation run produced:
 
   ```sql
   DELETE FROM statement
    WHERE id NOT IN (SELECT statement_id FROM statement_run_item WHERE statement_id IS NOT NULL);
   ```
-
-  The script also needs `python` on PATH for its JSON parsing (steps 3–4); without it, run the
-  seed tool with `Postgres__PrimaryConnectionString` set (see `docs/SCALE.md`) and trigger the
-  run through `POST /v1/statement-runs` by hand.
 - **Customer ids are data.** The pre-request script defaults `customerAId`/`customerBId` to
   placeholder GUIDs; on a seeded stack pass real ones (`newman ... --env-var customerAId=…
   --env-var customerBId=…`, or set them in the environment). Both must own at least one

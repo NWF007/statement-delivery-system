@@ -482,6 +482,33 @@ services:
     #     docker compose logs retention-worker | grep -c "lease acquired"   # -> 1
     networks: [statement-delivery]
 
+  # -------------------------------------------------------------------------------------------
+  #  Demo data - one-shot, after every service is healthy. Runs the seed tool in --demo mode:
+  #  35 customers (ten with the documented ids 11111111-1111-1111-1111-111111111101 .. 110), then
+  #  a REAL generation run for last month requested through the API, so every statement a
+  #  reviewer can list is one they can download. Idempotent, so repeated `up`s are harmless.
+  #  SEED_DEMO=false in .env leaves the stack empty. Exits 0 like the migrator.
+  # -------------------------------------------------------------------------------------------
+  seed-demo:
+    build:
+      context: .
+      dockerfile: tools/seed/Dockerfile
+    depends_on:
+      delivery-api:
+        condition: service_healthy
+      download-gateway:
+        condition: service_healthy
+      generation-worker:
+        condition: service_healthy
+    environment:
+      <<: *dotnet
+      # Through PgBouncer as the generation role, the same route the worker uses.
+      Postgres__PrimaryConnectionString: Host=pgbouncer;Port=6432;Database=statements_generation;Username=app_generation;Password=${APP_GENERATION_PASSWORD}
+      DEMO_API_URL: http://delivery-api:8080
+      SEED_DEMO: ${SEED_DEMO:-true}
+    restart: "no"
+    networks: [statement-delivery]
+
 volumes:
   postgres-data:
   postgres-replica-data:

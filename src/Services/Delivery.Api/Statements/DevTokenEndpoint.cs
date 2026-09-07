@@ -38,7 +38,9 @@ public static class DevTokenEndpoint
     {
         ArgumentNullException.ThrowIfNull(app);
 
-        app.MapPost("/v1/dev/tokens", (string customerId, IOptions<JwtOptions> options, bool staff = false, bool dpo = false) =>
+        // GET and POST alike: a reviewer can paste the URL into a browser and read the token off
+        // the page, which is the lowest-friction way to get past the first 401. Development only.
+        app.MapMethods("/v1/dev/tokens", ["GET", "POST"], (string customerId, IOptions<JwtOptions> options, bool staff = false, bool dpo = false) =>
         {
             JwtOptions jwt = options.Value;
 

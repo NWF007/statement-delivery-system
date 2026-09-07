@@ -75,6 +75,7 @@ public sealed partial class SupplyChainAndConfigurationTests
     [InlineData("src/Services/Generation.Worker/Dockerfile")]
     [InlineData("src/Services/Retention.Worker/Dockerfile")]
     [InlineData("src/Migrations/Db.Migrator/Dockerfile")]
+    [InlineData("tools/seed/Dockerfile")]
     public void EveryImage_IsChiseled_AndRunsAsNonRoot(string dockerfile)
     {
         string contents = RepositoryFiles.Read(dockerfile);
@@ -96,6 +97,7 @@ public sealed partial class SupplyChainAndConfigurationTests
     [InlineData("src/Services/Generation.Worker/Dockerfile")]
     [InlineData("src/Services/Retention.Worker/Dockerfile")]
     [InlineData("src/Migrations/Db.Migrator/Dockerfile")]
+    [InlineData("tools/seed/Dockerfile")]
     public void RuntimeStages_DoNotReintroduceAShellOrPackageManager(string dockerfile)
     {
         // The single most common way a chiseled image stops being chiseled is somebody adding curl
