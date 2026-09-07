@@ -165,7 +165,7 @@ LINK=$(curl -fsS -X POST "$API/v1/statements/$STATEMENT_ID/download-links?period
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{}' | jq -r .url)
 
 # 3. Redeem it: the gateway decrypts and streams a real PDF
-curl -fsS "$LINK" -o statement.pdf && file statement.pdf     # PDF document, 2 page(s)
+curl -fsS "$LINK" -o statement.pdf && file statement.pdf     # "PDF document, version 1.4, ..."
 
 # 4. Redeem it again
 curl -s -o /dev/null -w '%{http_code}\n' "$LINK"             # 404 - the link was single-use

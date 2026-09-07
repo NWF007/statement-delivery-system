@@ -53,7 +53,7 @@ echo "$LINK"
 
 # Download the PDF through the gateway (decrypt-and-stream, never a presigned URL)
 curl -fsS "$LINK" -o /tmp/statement.pdf && file /tmp/statement.pdf
-#    -> /tmp/statement.pdf: PDF document, version 1.4, 2 page(s)
+#    -> /tmp/statement.pdf: PDF document, version 1.4, 1 page(s)
 ```
 
 The audit entries so far:
