@@ -48,7 +48,7 @@ arithmetic (`MAX(version)+1`, a new row, a new object) is the mechanism that abs
 property this ADR guarantees is *within* a deployment: the same document, the same binaries, the
 same bytes. Cross-version hash stability was never the goal and is not claimed.
 
-If a future library version breaks the property outright, the fallback the brief prescribes
+If a future library version breaks the property outright, the fallback the specification prescribes
 stands: document the limitation, fall back to determinism of extracted text content, and lean on
 the `(account_id, period_start, version)` unique constraint as the idempotency backstop. The two
 tests are the tripwire that forces that conversation before the bytes ship.

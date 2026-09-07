@@ -16,7 +16,7 @@ namespace IntegrationTests;
 /// The binary COPY bulk-insert path.
 /// </summary>
 /// <remarks>
-/// Thirty million rows a month cannot go in one INSERT at a time. This is the benchmark the brief
+/// Thirty million rows a month cannot go in one INSERT at a time. This is the benchmark the specification
 /// calls for: it exists before the first caller does, because the shape of the persistence layer
 /// depends on it and a bulk path retrofitted later tends to arrive as a second, parallel data
 /// access stack.

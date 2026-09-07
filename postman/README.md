@@ -9,8 +9,8 @@ Exercises the two public services end to end:
 
 The collection was **derived from the running APIs' OpenAPI documents**, fetched from
 `http://localhost:8081/openapi/v1.json` and `http://localhost:8082/openapi/v1.json` (the
-`/v3/api-docs` path the brief specifies is Swashbuckle's; this stack uses .NET's built-in OpenAPI
-at `/openapi/{document}.json`). Where the live contract and the brief disagreed, the contract won —
+`/v3/api-docs` path the specification names is Swashbuckle's; this stack uses .NET's built-in OpenAPI
+at `/openapi/{document}.json`). Where the live contract and the written specification disagreed, the contract won —
 see **Findings** below.
 
 Files:
@@ -190,16 +190,16 @@ alongside the console output.
 
 ---
 
-## Findings — where the API and the brief/spec disagree
+## Findings — where the API and the written specification disagree
 
-Reported as the brief asked, contract-wins:
+The contract wins in every case:
 
-1. **No per-statement `access-log` endpoint exists.** Folder 04 and §5 of the brief call for
+1. **No per-statement `access-log` endpoint exists.** Folder 04 and §5 of the specification call for
    `GET /v1/statements/{id}/access-log`; there is no such route in the code or either OpenAPI
    document. Access events live in the audit chain, verified through `GET /v1/audit/verify`. The
    collection's folder 04 does chain verification and scope, and notes the absence in its
-   description. **This is the one requested capability that could not be built — because the API
-   does not offer it.**
+   description. **The collection cannot exercise a route the API
+   does not offer.**
 
 2. **Endpoints present in code but absent from OpenAPI.** `/health/live`, `/health/ready` and
    `/v1/dev/tokens` are mapped but undocumented in the generated spec. Health probes being
@@ -211,14 +211,14 @@ Reported as the brief asked, contract-wins:
    documenting `200`:
    - `POST /v1/statements/{id}/legal-holds` and `POST /v1/customers/{id}/legal-holds` → **201**
    - `POST /v1/admin/reconciliation/run` → **202**
-   - `DELETE /v1/customers/{id}/erasure` (cancel) → **204** (matches the brief; contradicts the spec)
+   - `DELETE /v1/customers/{id}/erasure` (cancel) → **204** (matches the written specification; contradicts the OpenAPI document)
    - `POST /v1/customers/{id}/erasure` (permitted) → **202**
 
    The collection asserts the **runtime** codes. A documentation-only gap — the behaviour is
    correct — worth a `.Produces` pass on those endpoints.
 
 4. **`DELETE /v1/legal-holds/{holdId}` takes a request body** (`{ releaseReason }`), which the
-   brief showed without one. Minimal APIs require the body to be explicitly `[FromBody]` on DELETE;
+   specification showed without one. Minimal APIs require the body to be explicitly `[FromBody]` on DELETE;
    the collection sends it.
 
 5. **DPO scope requires `staff=true&dpo=true`** on the dev-token mint (see §3). Documented, not a
@@ -244,7 +244,7 @@ Reported as the brief asked, contract-wins:
    to `application/problem+json` — the erasure 409 is a decision payload
    (`{ reason, basis, retainUntil }`, plain JSON) rather than a problem document.
 
-9. **`GET /v1/legal-holds` returns `{ holds: [...], cursor }`**, not `{ items }` as the brief's
+9. **`GET /v1/legal-holds` returns `{ holds: [...], cursor }`**, not `{ items }` as the specification's
    catalogue convention would suggest. The collection asserts the contract's shape.
 
 10. **A statement run planned against an empty catalogue stays `RUNNING` forever** with

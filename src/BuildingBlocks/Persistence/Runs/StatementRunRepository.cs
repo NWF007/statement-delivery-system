@@ -307,7 +307,7 @@ public sealed class StatementRunRepository : IStatementRunRepository
          ORDER BY created_at;
         """;
 
-    // Keyset on id, never OFFSET. Eligibility per the brief: ACTIVE, open before the period
+    // Keyset on id, never OFFSET. Eligibility per the specification: ACTIVE, open before the period
     // ended, and not closed before it started. The dormant are still statemented; the closed
     // stop receiving statements after their closing period.
     private const string StreamAccountsSql = """
@@ -324,9 +324,9 @@ public sealed class StatementRunRepository : IStatementRunRepository
     // =========================================================================================
     //  PLANNING INSERT: unnest + ON CONFLICT, not binary COPY.
     //
-    //  ⚠ DEVIATION FROM THE BRIEF, which said "batch-INSERT run items via IBulkWriter". The bulk
+    //  ⚠ DEVIATION FROM THE SPECIFICATION, which said "batch-INSERT run items via IBulkWriter". The bulk
     //  writer is binary COPY, and COPY cannot express ON CONFLICT DO NOTHING - the very clause
-    //  the same brief calls "what makes planning resumable". Of the two instructions, the
+    //  the same specification calls "what makes planning resumable". Of the two instructions, the
     //  resumability one is load-bearing, so it wins. unnest keeps the batch a single round trip
     //  (one statement per 10,000 accounts, not 10,000 statements) and conflicts skip silently.
     //  The COPY alternative - staging table plus INSERT..SELECT..ON CONFLICT - works under

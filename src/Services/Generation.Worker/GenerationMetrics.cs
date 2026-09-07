@@ -4,7 +4,7 @@ using Polly.CircuitBreaker;
 namespace Generation.Worker;
 
 /// <summary>
-/// Every signal the batch subsystem emits. Part I of the brief, instrument for instrument.
+/// Every signal the batch subsystem emits. Part I of the specification, instrument for instrument.
 /// </summary>
 /// <remarks>
 /// <para>

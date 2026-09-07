@@ -63,7 +63,7 @@ images from source and takes **3–5 minutes** on a four-core laptop; later star
 The shell examples below are bash (Git Bash on Windows works; in PowerShell, `curl` is an alias
 for `Invoke-WebRequest`, so use `curl.exe`). Nothing else is needed to run the stack. The .NET
 10 SDK (`global.json` pins 10.0.400) is required only for [running the tests](#running-the-tests)
-and seeding; `jq` only for the pretty-printed examples.
+and seeding; `jq` for the five-minute walkthrough below.
 
 ```bash
 git clone https://github.com/NWF007/statement-delivery-system.git
@@ -129,6 +129,55 @@ Invoke-RestMethod http://localhost:8081/ping   # same JSON, rendered as a PowerS
 Then open <http://localhost:18888> and confirm all four services are reporting traces, metrics and
 structured logs. The `traceId` in a JSON log line on stdout matches the trace in the dashboard —
 that is the point of the correlation wiring.
+
+### See it work in five minutes
+
+The stack is up. Now watch a single-use link get consumed. This part needs the .NET 10 SDK on the
+host (the seed tool is a .NET project), `jq`, and bash.
+
+```bash
+./scripts/seed-demo.sh          # ~1 minute: 25 customers, then a REAL generation run for last month
+```
+
+The script ends by printing three values. Export them, then mint a token for that customer:
+
+```bash
+export API=http://localhost:8081
+export CUSTOMER_ID=... STATEMENT_ID=... PERIOD=...        # paste the three printed values
+TOKEN=$(./scripts/demo-token.sh "$CUSTOMER_ID")           # a one-hour dev JWT, minted by the API
+```
+
+`demo-token.sh` calls `POST /v1/dev/tokens`, an endpoint that exists only in the Development
+environment. Every authenticated call below carries that token:
+
+```bash
+# 1. The customer's catalogue (the date range is mandatory; it is what prunes partitions)
+curl -fsS "$API/v1/customers/$CUSTOMER_ID/statements?from=$PERIOD&to=$(date +%Y-%m-%d)" \
+  -H "Authorization: Bearer $TOKEN" | jq '.items[0] | {id, periodStart, status}'
+
+# 2. Issue a single-use link
+LINK=$(curl -fsS -X POST "$API/v1/statements/$STATEMENT_ID/download-links?period=$PERIOD" \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{}' | jq -r .url)
+
+# 3. Redeem it: the gateway decrypts and streams a real PDF
+curl -fsS "$LINK" -o statement.pdf && file statement.pdf     # PDF document, 2 page(s)
+
+# 4. Redeem it again
+curl -s -o /dev/null -w '%{http_code}\n' "$LINK"             # 404 - the link was single-use
+
+# 5. Both attempts are in the audit trail (the chain IS the access log)
+docker compose exec -T -e PGPASSWORD=local-dev-postgres-password postgres psql -U postgres -d statements -c \
+  "SELECT action, outcome, denial_reason_code FROM audit_event
+    WHERE statement_id='$STATEMENT_ID' ORDER BY occurred_at;"
+```
+
+Expected at step 5: `LINK_ISSUED`, `DOWNLOAD_STARTED`, `DOWNLOAD_COMPLETED`, then `ACCESS_DENIED`
+with `denial_reason_code = CONSUMED`. The replay got the same 404 a random token would get; only
+the audit trail knows why. From PowerShell, `$TOKEN = .\scripts\demo-token.ps1 $CUSTOMER_ID` and
+`curl.exe` do the same job.
+
+That is the core property. [docs/DEMO.md](docs/DEMO.md) continues from here: IDOR resistance,
+audit-chain verification and tamper rejection, and crypto-erasure ending in a `410`.
 
 Stop and wipe:
 
@@ -398,6 +447,9 @@ docker run --rm -v "$PWD:/src" -w /src mcr.microsoft.com/dotnet/sdk:10.0.400 \
   dotnet test --project tests/UnitTests/UnitTests.csproj
 ```
 
+In Git Bash on Windows, prefix that with `MSYS_NO_PATHCONV=1`; otherwise MSYS rewrites `/src` into
+a Windows path and Docker rejects the working directory.
+
 Per suite:
 
 ```bash
@@ -437,8 +489,15 @@ Postgres__PrimaryConnectionString="Host=localhost;Port=6432;Database=statements_
 dotnet run --project tools/seed -- --customers 100000 --months 24
 ```
 
-Goes through PgBouncer as the generation role, the same route the worker uses; nothing here
-needs the `postgres` superuser. `scripts/seed-demo.sh` does this for you.
+From PowerShell, set `$env:Postgres__PrimaryConnectionString` to the same string with the
+password pasted in, then run the same `dotnet run` line.
+
+Goes through PgBouncer on 6432 as the generation role, the same route the worker uses. Do not
+point it at the `postgres` superuser through 6432: that account is deliberately absent from
+PgBouncer's userlist, so PgBouncer answers `SASL authentication failed`; the superuser only ever
+connects directly on 5432, and only the migrator needs it. The seed is a bulk COPY and is **not
+idempotent**: a second run fails on the customer unique constraint. `docker compose down -v`
+first, or use `scripts/seed-demo.sh`, which detects an earlier seed and skips it.
 
 Writes ~2.4M rows through Npgsql binary COPY, pre-creating every daily partition it needs, then
 runs `ANALYZE` so the `EXPLAIN` output that goes into `docs/SCALE.md` means something.
@@ -456,4 +515,5 @@ runs `ANALYZE` so the `EXPLAIN` output that goes into `docs/SCALE.md` means some
 | `load/` | k6 scenarios + the seed/export recipe |
 | `tests/` | Unit / Architecture / Security / Integration — the split the CI badge runs |
 | `tools/seed` | Deterministic volume seeding for the SCALE work |
-| `scripts/seed-demo.sh` + `docs/DEMO.md` | The ten-minute live demo |
+| `scripts/` | `seed-demo.sh` (demo data through the real pipeline), `demo-token.sh` / `.ps1` (a dev JWT) |
+| `docs/DEMO.md` | The guided walkthrough that the five-minute path above starts |

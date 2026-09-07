@@ -47,7 +47,7 @@ public sealed class RetentionWorkerOptions
     public int ArchiveBatchSize { get; set; } = 10_000;
 
     /// <summary>Gets or sets how many hours between erasure-executor passes.</summary>
-    /// <remarks>Daily by default, matching the brief ("a daily job") and the audit-on-transition cadence. A due erasure therefore executes up to a day after its window closes; the window is seven days, so the slack is noise.</remarks>
+    /// <remarks>Daily by default, matching the specification ("a daily job") and the audit-on-transition cadence. A due erasure therefore executes up to a day after its window closes; the window is seven days, so the slack is noise.</remarks>
     [Range(1, 168)]
     public int ErasureIntervalHours { get; set; } = 24;
 

@@ -140,7 +140,7 @@ CREATE INDEX IF NOT EXISTS idx_run_item_status
 -- it is, nothing removes these rows: no application role holds DELETE, as the REVOKEs at the foot
 -- of this script enforce.
 --
--- ⚠ DEVIATION FROM THE BRIEF, WITH THE REASON IN FULL. The brief says "no other role gets more
+-- ⚠ DEVIATION FROM THE SPECIFICATION, WITH THE REASON IN FULL. The specification says "no other role gets more
 -- than SELECT" - and also requires POST /v1/statement-runs and the failures/retry endpoint on
 -- the staff API at :8081, which runs as app_delivery. Those two sentences cannot both hold: the
 -- staff API must INSERT the run row and reset FAILED items. The narrowest grant that satisfies

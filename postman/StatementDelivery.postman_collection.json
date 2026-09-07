@@ -1031,7 +1031,7 @@
     },
     {
       "name": "04 Audit",
-      "description": "Chain verification and scope. NOTE: the per-statement access-log endpoint the brief asks for does not exist in this API (see README, 'Findings'); verification of access events is via the audit chain, not a REST access-log resource.",
+      "description": "Chain verification and scope. NOTE: the per-statement access-log endpoint the specification asks for does not exist in this API (see README, 'Findings'); verification of access events is via the audit chain, not a REST access-log resource.",
       "item": [
         {
           "name": "Verify all chains (staff)",
@@ -1527,7 +1527,7 @@
                 "{{holdId}}"
               ]
             },
-            "description": "DELETE carries a body (ReleaseHoldRequest.releaseReason) - see README, 'Findings', the brief showed this route without one.",
+            "description": "DELETE carries a body (ReleaseHoldRequest.releaseReason) - see README, 'Findings', the specification showed this route without one.",
             "auth": {
               "type": "apikey",
               "apikey": [
@@ -1990,7 +1990,7 @@
                 "erasure"
               ]
             },
-            "description": "204 when a scheduled erasure is cancelled; 404 when none is scheduled. The brief expects 204 and the code returns exactly that (Results.NoContent), though the OpenAPI document mislabels it 200 - see README, 'Findings'.",
+            "description": "204 when a scheduled erasure is cancelled; 404 when none is scheduled. The specification expects 204 and the code returns exactly that (Results.NoContent), though the OpenAPI document mislabels it 200 - see README, 'Findings'.",
             "auth": {
               "type": "apikey",
               "apikey": [

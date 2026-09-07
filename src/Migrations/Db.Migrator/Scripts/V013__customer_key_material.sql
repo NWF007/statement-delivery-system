@@ -1,7 +1,7 @@
 -- =============================================================================================
 -- V013  Customer key material: the middle tier of the key hierarchy.
 --
--- ⚠ NUMBERED V013, NOT V012 AS THE BRIEF SPECIFIED. V012__audit_verify_grant.sql already exists
+-- ⚠ NUMBERED V013, NOT V012 AS THE SPECIFICATION NUMBERED IT. V012__audit_verify_grant.sql already exists
 -- and has already run. Migrations here are forward-only and are never edited once applied, so a
 -- second V012 is not an option: DbUp keys its journal on the script name, and two scripts claiming
 -- the same version would either be silently skipped or applied out of order depending on which
@@ -21,7 +21,7 @@
 -- =============================================================================================
 
 -- IF NOT EXISTS on created_at because V008 already created it. Repeating the column is how the
--- brief described the change and it is harmless to state twice; ADD COLUMN without the guard would
+-- specification described the change and it is harmless to state twice; ADD COLUMN without the guard would
 -- abort the whole script on a table that is already correct.
 ALTER TABLE customer_key
     ADD COLUMN IF NOT EXISTS cohort_id     SMALLINT,

@@ -49,9 +49,9 @@ public interface IStatementContentWriter
 {
     /// <summary>Encrypts and stores statement content.</summary>
     /// <remarks>
-    /// ⚠ THIS SIGNATURE CARRIES TWO MORE PARAMETERS THAN THE BRIEF SKETCHED, AND IT HAS TO.
+    /// ⚠ THIS SIGNATURE CARRIES TWO MORE PARAMETERS THAN THE SPECIFICATION SKETCHED, AND IT HAS TO.
     /// <see cref="CryptoContext"/> holds exactly what the AAD binds - statement, customer, version -
-    /// and the key scheme the same brief specifies is
+    /// and the key scheme the same specification gives is
     /// <c>statements/{shard}/{accountId}/{period}-v{version}.enc</c>, which needs the ACCOUNT and the
     /// PERIOD as well. Neither belongs in <see cref="CryptoContext"/>: putting them there would widen
     /// the authenticated data to values that have nothing to do with identity, and every existing
@@ -804,7 +804,7 @@ public static class EncryptedObjectStoreExtensions
         //
         // This repository already answers this exact question twice - the Local key provider throws
         // outside Development (CryptoServiceCollectionExtensions), and so does a development JWT
-        // signing key (JwtOptions). A retention mode the brief itself calls irreversible deserves
+        // signing key (JwtOptions). A retention mode the specification itself calls irreversible deserves
         // the same treatment, and having the rule in two places and not the third is how it gets
         // forgotten in the third.
         string? mode = builder.Configuration.GetSection(ObjectLockOptions.SectionName)["Mode"];
