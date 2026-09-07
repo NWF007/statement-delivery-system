@@ -34,8 +34,8 @@ environment; the signing key never leaves the service.
 ```bash
 # List - the date range is mandatory and capped at 84 months (partition pruning is not optional)
 curl -fsS "$API/v1/customers/$CUSTOMER_ID/statements?from=$PERIOD&to=$(date +%Y-%m-%d)" \
-  -H "Authorization: Bearer $TOKEN" | jq '.items[0] | {id, periodStart, status}'
-#    -> { "id": "<STATEMENT_ID>", "periodStart": "<PERIOD>", "status": "AVAILABLE" }
+  -H "Authorization: Bearer $TOKEN" | jq '.items[0] | {id, period, status}'
+#    -> { "id": "<one of the customer's statements>", "period": { "start": "<PERIOD>", "end": ... }, "status": "AVAILABLE" }
 
 # Issue a single-use link
 LINK=$(curl -fsS -X POST "$API/v1/statements/$STATEMENT_ID/download-links?period=$PERIOD" \
@@ -54,7 +54,7 @@ The audit entries so far:
 docker compose exec -T -e PGPASSWORD=local-dev-postgres-password postgres psql -U postgres -d statements -c \
   "SELECT action, outcome, occurred_at FROM audit_event
     WHERE statement_id='$STATEMENT_ID' ORDER BY occurred_at DESC LIMIT 5;"
-#    -> DOWNLOAD_COMPLETED SUCCESS / DOWNLOAD_STARTED SUCCESS / LINK_ISSUED SUCCESS
+#    -> DOWNLOAD_COMPLETED / DOWNLOAD_STARTED / LINK_ISSUED / STATEMENT_GENERATED, all SUCCESS
 ```
 
 ## 2. Single-use (1 min)

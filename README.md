@@ -153,7 +153,7 @@ environment. Every authenticated call below carries that token:
 ```bash
 # 1. The customer's catalogue (the date range is mandatory; it is what prunes partitions)
 curl -fsS "$API/v1/customers/$CUSTOMER_ID/statements?from=$PERIOD&to=$(date +%Y-%m-%d)" \
-  -H "Authorization: Bearer $TOKEN" | jq '.items[0] | {id, periodStart, status}'
+  -H "Authorization: Bearer $TOKEN" | jq '.items[0] | {id, period, status}'
 
 # 2. Issue a single-use link
 LINK=$(curl -fsS -X POST "$API/v1/statements/$STATEMENT_ID/download-links?period=$PERIOD" \
@@ -167,14 +167,15 @@ curl -s -o /dev/null -w '%{http_code}\n' "$LINK"             # 404 - the link wa
 
 # 5. Both attempts are in the audit trail (the chain IS the access log)
 docker compose exec -T -e PGPASSWORD=local-dev-postgres-password postgres psql -U postgres -d statements -c \
-  "SELECT action, outcome, denial_reason_code FROM audit_event
-    WHERE statement_id='$STATEMENT_ID' ORDER BY occurred_at;"
+  "SELECT action, outcome, denial_reason_code, statement_id FROM audit_event
+    WHERE statement_id='$STATEMENT_ID' OR action='ACCESS_DENIED' ORDER BY occurred_at;"
 ```
 
-Expected at step 5: `LINK_ISSUED`, `DOWNLOAD_STARTED`, `DOWNLOAD_COMPLETED`, then `ACCESS_DENIED`
-with `denial_reason_code = CONSUMED`. The replay got the same 404 a random token would get; only
-the audit trail knows why. From PowerShell, `$TOKEN = .\scripts\demo-token.ps1 $CUSTOMER_ID` and
-`curl.exe` do the same job.
+Expected at step 5: `STATEMENT_GENERATED`, `LINK_ISSUED`, `DOWNLOAD_STARTED`, `DOWNLOAD_COMPLETED`,
+then `ACCESS_DENIED` with `denial_reason_code = CONSUMED` and an empty `statement_id`. That last
+row is deliberately anonymous: the replay got the same 404 a random token would get, and the
+denial record does not confirm what the token pointed at either. From PowerShell,
+`$TOKEN = .\scripts\demo-token.ps1 $CUSTOMER_ID` and `curl.exe` do the same job.
 
 That is the core property. [docs/DEMO.md](docs/DEMO.md) continues from here: IDOR resistance,
 audit-chain verification and tamper rejection, and crypto-erasure ending in a `410`.
