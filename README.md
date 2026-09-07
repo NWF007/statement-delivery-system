@@ -74,7 +74,7 @@ walkthrough uses `jq` while the PowerShell one needs nothing extra. The .NET 10 
 git clone https://github.com/NWF007/statement-delivery-system.git
 cd statement-delivery-system
 cp .env.example .env
-docker compose up --build
+docker compose up --build -d      # add `docker compose logs -f` if you want to watch it converge
 ```
 
 That is the whole procedure. No manual steps, no waiting and retrying: every dependency declares
@@ -116,10 +116,10 @@ Verify it:
 
 ```bash
 docker compose ps -a db-migrator               # Exited (0) - one-shot; hidden without -a
-curl -f http://localhost:8081/health/live      # process is alive
-curl -f http://localhost:8081/health/ready     # dependencies are reachable
-curl -f http://localhost:8082/health/live
-curl -f http://localhost:8082/health/ready
+curl -fsS http://localhost:8081/health/live    # process is alive -> Healthy
+curl -fsS http://localhost:8081/health/ready   # dependencies are reachable -> a JSON list of checks, all Healthy
+curl -fsS http://localhost:8082/health/live
+curl -fsS http://localhost:8082/health/ready
 curl -s http://localhost:8081/ping | jq        # service, version, environment, utcNow
 ```
 
@@ -128,14 +128,17 @@ The same checks from Windows PowerShell, where `curl` is an alias for `Invoke-We
 
 ```powershell
 docker compose ps -a db-migrator
-curl.exe -f http://localhost:8081/health/ready
-curl.exe -f http://localhost:8082/health/ready
+curl.exe -fsS http://localhost:8081/health/ready
+curl.exe -fsS http://localhost:8082/health/ready
 Invoke-RestMethod http://localhost:8081/ping   # same JSON, rendered as a PowerShell object
 ```
 
-Then open <http://localhost:18888> and confirm all four services are reporting traces, metrics and
-structured logs. The `traceId` in a JSON log line on stdout matches the trace in the dashboard —
-that is the point of the correlation wiring.
+Then open <http://localhost:18888>. No login: the dashboard runs unsecured in this stack. It opens
+on Structured logs, and the Resource filter lists the four services (`delivery-api`,
+`download-gateway`, `generation-worker`, `retention-worker`) once each has logged its startup; the
+Traces page fills in as soon as the walkthrough below makes its first request. The `traceId` in a
+JSON log line on stdout matches the trace in the dashboard — that is the point of the
+correlation wiring.
 
 ### See it work in five minutes
 
@@ -182,16 +185,21 @@ curl -fsS "$LINK" -o statement.pdf && file statement.pdf     # "PDF document, ve
 # 4. Redeem it again
 curl -s -o /dev/null -w '%{http_code}\n' "$LINK"             # 404 - the link was single-use
 
-# 5. Both attempts are in the audit trail (the chain IS the access log)
+# 5. Both attempts are in the audit trail (the chain IS the access log). Run this from the repo
+#    root: `docker compose exec` needs the compose file.
 docker compose exec -T -e PGPASSWORD=local-dev-postgres-password postgres psql -U postgres -d statements -c \
   "SELECT action, outcome, denial_reason_code, statement_id FROM audit_event
-    WHERE statement_id='$STATEMENT_ID' OR action='ACCESS_DENIED' ORDER BY occurred_at;"
+    WHERE statement_id='$STATEMENT_ID'
+       OR (action='ACCESS_DENIED' AND occurred_at >= (SELECT max(occurred_at) FROM audit_event WHERE statement_id='$STATEMENT_ID'))
+    ORDER BY occurred_at;"
 ```
 
 Expected at step 5: `STATEMENT_GENERATED`, `LINK_ISSUED`, `DOWNLOAD_STARTED`, `DOWNLOAD_COMPLETED`,
 then `ACCESS_DENIED` with `denial_reason_code = CONSUMED` and an empty `statement_id`. That last
 row is deliberately anonymous: the replay got the same 404 a random token would get, and the
-denial record does not confirm what the token pointed at either.
+denial record does not confirm what the token pointed at either. Because it carries no statement
+or customer, the query picks it up by time (denials since this statement's last recorded event),
+which is what keeps the output the same when you repeat the walkthrough for another customer.
 
 The same five steps from PowerShell, with no `jq`:
 
@@ -217,8 +225,8 @@ Invoke-WebRequest $LINK -OutFile statement.pdf -UseBasicParsing; (Get-Item state
 # 4. Redeem it again: prints 404
 try { Invoke-WebRequest $LINK -OutFile "$env:TEMP\replay.bin" -UseBasicParsing } catch { $_.Exception.Response.StatusCode.value__ }
 
-# 5. Both attempts are in the audit trail
-docker compose exec -T -e PGPASSWORD=local-dev-postgres-password postgres psql -U postgres -d statements -c "SELECT action, outcome, denial_reason_code FROM audit_event WHERE statement_id='$STATEMENT_ID' OR action='ACCESS_DENIED' ORDER BY occurred_at;"
+# 5. Both attempts are in the audit trail. Run from the repo root: docker compose needs the compose file.
+docker compose exec -T -e PGPASSWORD=local-dev-postgres-password postgres psql -U postgres -d statements -c "SELECT action, outcome, denial_reason_code FROM audit_event WHERE statement_id='$STATEMENT_ID' OR (action='ACCESS_DENIED' AND occurred_at >= (SELECT max(occurred_at) FROM audit_event WHERE statement_id='$STATEMENT_ID')) ORDER BY occurred_at;"
 ```
 
 That is the core property. [docs/DEMO.md](docs/DEMO.md) continues from here: IDOR resistance,
