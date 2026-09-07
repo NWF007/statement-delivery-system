@@ -43,13 +43,23 @@ public static class ErasureEndpoints
             .WithTags(global::Delivery.Api.Configuration.DeliveryApiOpenApi.Tags.Erasure)
             .RequireAuthorization(global::Delivery.Api.Configuration.DeliveryApiExtensions.DpoPolicy)
             .WithName("RequestErasure")
-            .WithSummary("Schedules crypto-erasure with a seven-day cooling-off window, or explains why it cannot happen.");
+            .WithSummary("Schedules crypto-erasure with a seven-day cooling-off window, or explains why it cannot happen.")
+            .WithDescription(
+                "DPO scope (`staff=true&dpo=true` on the token endpoint). Statements sit under a Compliance-mode Object Lock and cannot "
+                + "be deleted, so erasure destroys the customer's content-encryption key instead: the ciphertext stays, permanently "
+                + "unreadable. The request is evaluated over ALL of the customer's statements and refused with 409 if any one is under "
+                + "a legal hold or inside a statutory retention period; the 409 body names the case reference or the statute and date. "
+                + "Accepted requests are executed by the retention worker after a seven-day cooling-off window, during which "
+                + "`DELETE` on this path cancels them.");
 
         _ = app.MapDelete("/v1/customers/{customerId:guid}/erasure", CancelAsync)
             .WithTags(global::Delivery.Api.Configuration.DeliveryApiOpenApi.Tags.Erasure)
             .RequireAuthorization(global::Delivery.Api.Configuration.DeliveryApiExtensions.DpoPolicy)
             .WithName("CancelErasure")
-            .WithSummary("Cancels a scheduled erasure while the cooling-off window is open.");
+            .WithSummary("Cancels a scheduled erasure while the cooling-off window is open.")
+            .WithDescription(
+                "DPO scope. Withdraws a pending erasure before the worker executes it. 404 if nothing is scheduled for the customer; "
+                + "once the key has been destroyed there is nothing to cancel and the customer's statements answer 410.");
 
         return app;
     }

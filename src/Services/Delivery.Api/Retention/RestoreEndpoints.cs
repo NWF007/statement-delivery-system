@@ -37,14 +37,22 @@ public static class RestoreEndpoints
             // pending-restore reuse already blunts repeats; the limiter is the backstop.
             .RequireRateLimiting(global::Delivery.Api.Configuration.DeliveryApiExtensions.PerCallerPolicy)
             .WithName("RequestRestore")
-            .WithSummary("Requests a restore from cold storage. 202: this takes a while.");
+            .WithSummary("Requests a restore from cold storage. 202: this takes a while.")
+            .WithDescription(
+                "Customer scope; the statement must belong to the token's `sub`. Statements older than the hot-tier window are in cold "
+                + "storage, and a retrieval takes hours in production, so this endpoint queues the work and answers 202 with a restore id "
+                + "and an estimate. Poll `GET /v1/statements/{statementId}/restore/{restoreId}`; a repeat request while one is pending "
+                + "returns the existing restore rather than queueing another. Not needed for the seeded demo statement, which is hot.");
 
         _ = app.MapGet("/v1/statements/{statementId:guid}/restore/{restoreId:guid}", StatusAsync)
             .WithTags(global::Delivery.Api.Configuration.DeliveryApiOpenApi.Tags.Restore)
             .RequireAuthorization()
             .RequireRateLimiting(global::Delivery.Api.Configuration.DeliveryApiExtensions.PerCallerPolicy)
             .WithName("GetRestoreStatus")
-            .WithSummary("Polls one restore request.");
+            .WithSummary("Polls one restore request.")
+            .WithDescription(
+                "Customer scope. Status of a restore issued by `POST /v1/statements/{statementId}/restore`: pending, completed or failed, "
+                + "with the estimate while pending. Once completed the statement is hot again and a download link can be issued for it.");
 
         return app;
     }
