@@ -17,13 +17,14 @@ docker compose up --build -d
 ```
 
 The script is safe to re-run (an already-seeded database is detected and skipped). It always
-creates the documented demo customer, `11111111-1111-1111-1111-111111111111`, and the generation
-run produces last month's statement for it. Mint two tokens, then read that statement's id and
-period from the API:
+creates ten demo customers with fixed ids, `11111111-1111-1111-1111-111111111101` through `…110`,
+and the generation run produces last month's statement for each. This tour uses the first two.
+Mint two tokens, then read the first customer's statement id and period from the API:
 
 ```bash
 export API=http://localhost:8081 GW=http://localhost:8082
-export CUSTOMER_ID=11111111-1111-1111-1111-111111111111
+export CUSTOMER_ID=11111111-1111-1111-1111-111111111101
+export OTHER_CUSTOMER_ID=11111111-1111-1111-1111-111111111102
 export TOKEN=$(./scripts/demo-token.sh "$CUSTOMER_ID")           # that customer
 export STAFF=$(./scripts/demo-token.sh "$CUSTOMER_ID" staff)     # plus the operator scope
 LIST=$(curl -fsS "$API/v1/customers/$CUSTOMER_ID/statements?from=$(( $(date +%Y) - 1 ))-01-01&to=$(date +%Y-%m-%d)" \
@@ -32,7 +33,7 @@ export STATEMENT_ID=$(echo "$LIST" | jq -r '.items[0].id')
 export PERIOD=$(echo "$LIST" | jq -r '.items[0].period.start')
 ```
 
-The script also prints the same three values at the end, if you would rather paste them.
+The script also prints every demo customer's statement id at the end, if you would rather paste.
 
 `demo-token.sh` calls the API's own `POST /v1/dev/tokens`, which exists only in the Development
 environment; the signing key never leaves the service.
@@ -80,11 +81,12 @@ reason is preserved in the audit trail, not in the response.
 ## 3. IDOR resistance (1 min)
 
 ```bash
-# Another customer's statement: 404, NOT 403
-OTHER=$(docker compose exec -T -e PGPASSWORD=local-dev-postgres-password postgres psql -U postgres -d statements -tA -c \
-  "SELECT id FROM statement WHERE customer_id <> '$CUSTOMER_ID' AND status='AVAILABLE' LIMIT 1;")
+# The second demo customer's statement, fetched with THEIR token, then requested with OURS
+OTHER_TOKEN=$(./scripts/demo-token.sh "$OTHER_CUSTOMER_ID")
+OTHER=$(curl -fsS "$API/v1/customers/$OTHER_CUSTOMER_ID/statements?from=$PERIOD&to=$(date +%Y-%m-%d)" \
+  -H "Authorization: Bearer $OTHER_TOKEN" | jq -r '.items[0].id')
 curl -s -o /dev/null -w '%{http_code}\n' \
-  "$API/v1/statements/$OTHER?period=$PERIOD" -H "Authorization: Bearer $TOKEN"    # -> 404
+  "$API/v1/statements/$OTHER?period=$PERIOD" -H "Authorization: Bearer $TOKEN"    # -> 404, NOT 403
 curl -s -o /dev/null -w '%{http_code}\n' \
   "$API/v1/statements/$STATEMENT_ID?period=$PERIOD" -H "Authorization: Bearer $TOKEN"   # -> 200
 ```

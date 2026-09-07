@@ -139,13 +139,15 @@ host (the seed tool is a .NET project), `jq`, and bash.
 ./scripts/seed-demo.sh          # ~1 minute: 25 customers, then a REAL generation run for last month
 ```
 
-The seed always creates one customer with a fixed, documented id,
-**`11111111-1111-1111-1111-111111111111`**, and the generation run produces last month's statement
-for it. Nothing needs to be copied out of the script's output. Mint a token for that customer:
+The seed always creates **ten demo customers with fixed, documented ids**,
+`11111111-1111-1111-1111-111111111101` through `…110`, each with one account, and the generation
+run produces last month's statement for every one of them. Nothing needs to be copied out of the
+script's output; the walkthrough below uses the first, and any of the ten works the same way.
+Mint a token for that customer:
 
 ```bash
 export API=http://localhost:8081
-export CUSTOMER_ID=11111111-1111-1111-1111-111111111111
+export CUSTOMER_ID=11111111-1111-1111-1111-111111111101     # ...101 to ...110 all exist
 TOKEN=$(./scripts/demo-token.sh "$CUSTOMER_ID")           # a one-hour dev JWT, minted by the API
 ```
 

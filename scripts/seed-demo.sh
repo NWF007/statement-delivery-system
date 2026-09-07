@@ -63,18 +63,22 @@ else
   dotnet run --project tools/seed -c Release -- --customers 25 --months 3 --seed 7
 fi
 
-# A customer with a FIXED, documented id, so the README can name it instead of asking the reader
-# to paste one. Idempotent: the same rows on every run. The account id hashes to "known" in the
-# mock ledger (LedgerGenerator.IsKnown), so the generation run renders a real statement for it.
-DEMO_CUSTOMER_ID="11111111-1111-1111-1111-111111111111"
-psql_statements -c "
+# Ten customers with FIXED, documented ids, so the README can name them instead of asking the
+# reader to paste one: 11111111-1111-1111-1111-111111111101 through ...110, each with one account
+# 22222222-2222-2222-2222-2222222222NN. Idempotent: the same rows on every run. Every account id
+# hashes to "known" in the mock ledger (LedgerGenerator.IsKnown), so the generation run renders a
+# real statement for each of them.
+DEMO_CUSTOMER_ID="11111111-1111-1111-1111-111111111101"
+DEMO_SQL=""
+for n in 01 02 03 04 05 06 07 08 09 10; do
+  DEMO_SQL="$DEMO_SQL
   INSERT INTO customer (id, external_ref, status)
-  VALUES ('$DEMO_CUSTOMER_ID', 'DEMO-CUSTOMER', 'ACTIVE')
-  ON CONFLICT (id) DO NOTHING;
+  VALUES ('11111111-1111-1111-1111-1111111111$n', 'DEMO-CUSTOMER-$n', 'ACTIVE') ON CONFLICT (id) DO NOTHING;
   INSERT INTO account (id, customer_id, account_number_masked, product_type, status, opened_at, closed_at)
-  VALUES ('11111111-1111-1111-1111-111111111112', '$DEMO_CUSTOMER_ID', '****1111', 'CURRENT', 'ACTIVE', '2020-01-01T00:00:00Z', NULL)
-  ON CONFLICT (id) DO NOTHING;" > /dev/null
-echo "   demo customer $DEMO_CUSTOMER_ID is in place"
+  VALUES ('22222222-2222-2222-2222-2222222222$n', '11111111-1111-1111-1111-1111111111$n', '****11$n', 'CURRENT', 'ACTIVE', '2020-01-01T00:00:00Z', NULL) ON CONFLICT (id) DO NOTHING;"
+done
+printf "%b" "$DEMO_SQL" | psql_statements > /dev/null
+echo "   demo customers 11111111-1111-1111-1111-111111111101 .. 110 are in place"
 
 echo "== 3/4 requesting a generation run for last month (real render -> encrypt -> upload)"
 STAFF_TOKEN=$(curl -fsS -X POST \
@@ -114,12 +118,13 @@ PRUNED=$(psql_statements -c "
 echo "   removed $PRUNED seed-only statement rows (no object behind them)"
 
 echo
-echo "Demo-ready. The documented demo customer and their generated statement:"
+echo "Demo-ready. The ten documented demo customers and their statements for $PERIOD_START:"
 psql_statements -c "
-  SELECT 'CUSTOMER_ID=' || s.customer_id || E'\nSTATEMENT_ID=' || s.id || E'\nPERIOD=' || s.period_start
+  SELECT 'CUSTOMER_ID=' || s.customer_id || '  STATEMENT_ID=' || s.id
     FROM statement s
     JOIN statement_run_item r ON r.statement_id = s.id
    WHERE s.status = 'AVAILABLE' AND s.period_start = '$PERIOD_START'
-     AND s.customer_id = '$DEMO_CUSTOMER_ID'
-   ORDER BY s.id LIMIT 1;"
-echo "Mint a customer token:  TOKEN=\$(./scripts/demo-token.sh $DEMO_CUSTOMER_ID)"
+     AND s.customer_id::text LIKE '11111111-1111-1111-1111-1111111111%'
+   ORDER BY s.customer_id;"
+echo "PERIOD=$PERIOD_START"
+echo "Mint a token for any of them:  TOKEN=\$(./scripts/demo-token.sh $DEMO_CUSTOMER_ID)"
