@@ -340,7 +340,7 @@ sequenceDiagram
     G->>S: GET ciphertext (streamed)
     G-->>C: 200 PDF - decrypted and tag-verified frame by frame
     C->>G: same link again
-    G-->>C: 404 (uniform; real reason only in the audit trail)
+    G-->>C: 404 (uniform - the real reason is only in the audit trail)
 ```
 
 ## Services
