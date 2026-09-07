@@ -326,6 +326,19 @@ internal static class GenerationSeed
 
         await using (NpgsqlConnection connection = await postgres.OpenAdminAsync(ct).ConfigureAwait(false))
         {
+            // The render loop serves the OLDEST running run and stays on it while it is RUNNING,
+            // even when nothing in it can be claimed. Sibling tests in this collection create runs
+            // by hand (RunClaimTests, RunPlanningTests) and leave them RUNNING with items claimed
+            // by workers that never existed; a real worker started here would park on that run and
+            // this test's run would never see a renderer. Retire every leftover first, so the
+            // run created next is the only active one - which is the situation each test means.
+            _ = await connection.ExecuteAsync(new CommandDefinition(
+                """
+                UPDATE statement_run SET status = 'COMPLETED', updated_at = now()
+                 WHERE status IN ('PLANNING', 'RUNNING', 'PAUSED');
+                """,
+                commandTimeout: 60, cancellationToken: ct)).ConfigureAwait(false);
+
             // The isolation anchor lives decades before any provisioned partition, and a render
             // for an unprovisioned month dies at the INSERT ("no partition of relation
             // statement found"). Historical backfill provisions its partitions first in

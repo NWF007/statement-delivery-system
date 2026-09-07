@@ -198,7 +198,13 @@ public sealed class RetentionLifecycleTests
         Published b = await PublishAsync(ct).ConfigureAwait(true);
         foreach (Published published in new[] { a, b })
         {
-            await BackdateRetainUntilAsync(published, ct).ConfigureAwait(true);
+            // Two years, not the helper's one: the candidate query takes the LONGEST-overdue rows
+            // first, and a sibling test (Purge_RespectsObjectLock_EvenIfDbSaysExpired) leaves a row
+            // backdated by one year that is eligible on paper and refused by the store forever. With
+            // a batch of one, a tie on retain_until could hand that row the whole batch, and a pass
+            // that purged nothing would fail this test for a reason that has nothing to do with the
+            // bound. Strictly older rows sort ahead of every leftover.
+            await BackdateRetainUntilAsync(published, DateOnly.FromDateTime(DateTime.UtcNow).AddYears(-2), ct).ConfigureAwait(true);
             await UnlockObjectAsync(published.StorageKey, ct).ConfigureAwait(true);
         }
 
@@ -1116,14 +1122,17 @@ public sealed class RetentionLifecycleTests
         return new Published(customer, account, statement, period.Start, stored.Key);
     }
 
-    private async Task BackdateRetainUntilAsync(Published published, CancellationToken ct)
+    private Task BackdateRetainUntilAsync(Published published, CancellationToken ct)
+        => BackdateRetainUntilAsync(published, DateOnly.FromDateTime(DateTime.UtcNow).AddYears(-1), ct);
+
+    private async Task BackdateRetainUntilAsync(Published published, DateOnly retainUntil, CancellationToken ct)
     {
         await using NpgsqlConnection admin = await _postgres.OpenAdminAsync(ct).ConfigureAwait(true);
         _ = await admin.ExecuteAsync(new CommandDefinition(
             "UPDATE statement SET retain_until = @past WHERE id = @id AND period_start = @period;",
             new
             {
-                past = DateOnly.FromDateTime(DateTime.UtcNow).AddYears(-1),
+                past = retainUntil,
                 id = published.StatementId,
                 period = published.Period,
             },

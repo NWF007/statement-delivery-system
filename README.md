@@ -437,7 +437,9 @@ dotnet test                            # everything; integration tests skip with
 
 Needs the .NET 10 SDK on the host (`global.json` pins 10.0.400). Without a reachable Docker
 daemon the integration project reports **14 passed, 163 skipped**; that is the expected shape,
-not a broken run. The 163 need Testcontainers and run automatically when Docker is available.
+not a broken run. The 163 need Testcontainers and run automatically when Docker is available; with
+it, the integration project starts its own PostgreSQL and MinIO containers and takes **about 20
+minutes** on a four-core laptop, most of it silent. The other three projects finish in seconds.
 
 No SDK on the host? The build image runs the fast suites unchanged (the integration suite needs
 the Docker socket as well, so run that one on the host):
