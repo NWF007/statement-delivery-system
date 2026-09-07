@@ -55,6 +55,7 @@ public static class DownloadEndpoints
         ArgumentNullException.ThrowIfNull(app);
 
         app.MapGet(RedeemRoute, RedeemAsync)
+            .WithTags(Configuration.DownloadGatewayOpenApi.DownloadsTag)
             .AllowAnonymous()
             // THREE DISTINCT CONTROLS, EACH ADDRESSING A DIFFERENT THREAT.
             //

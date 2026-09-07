@@ -28,6 +28,7 @@ public static class RestoreEndpoints
         ArgumentNullException.ThrowIfNull(app);
 
         _ = app.MapPost("/v1/statements/{statementId:guid}/restore", RequestAsync)
+            .WithTags(global::Delivery.Api.Configuration.DeliveryApiOpenApi.Tags.Restore)
             .RequireAuthorization()
 
             // Customer-facing and it queues WORK (a simulated or real cold-tier retrieval), so
@@ -39,6 +40,7 @@ public static class RestoreEndpoints
             .WithSummary("Requests a restore from cold storage. 202: this takes a while.");
 
         _ = app.MapGet("/v1/statements/{statementId:guid}/restore/{restoreId:guid}", StatusAsync)
+            .WithTags(global::Delivery.Api.Configuration.DeliveryApiOpenApi.Tags.Restore)
             .RequireAuthorization()
             .RequireRateLimiting(global::Delivery.Api.Configuration.DeliveryApiExtensions.PerCallerPolicy)
             .WithName("GetRestoreStatus")

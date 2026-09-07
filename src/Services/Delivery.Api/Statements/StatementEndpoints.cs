@@ -41,6 +41,7 @@ public static class StatementEndpoints
             .RequireRateLimiting(Configuration.DeliveryApiExtensions.PerCallerPolicy);
 
         group.MapGet("/customers/{customerId}/statements", ListStatementsAsync)
+            .WithTags(Configuration.DeliveryApiOpenApi.Tags.Statements)
             .WithName("ListStatements")
             .WithSummary("Lists a customer's available statements, newest first.")
             .WithDescription(
@@ -54,6 +55,7 @@ public static class StatementEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound);
 
         group.MapGet("/statements/{statementId}", GetStatementAsync)
+            .WithTags(Configuration.DeliveryApiOpenApi.Tags.Statements)
             .WithName("GetStatement")
             .WithSummary("Reads one statement's metadata. Never its bytes.")
             .WithDescription(

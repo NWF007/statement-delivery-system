@@ -117,6 +117,7 @@ public static class DownloadLinkEndpoints
             .RequireDistributedRateLimitPerSubject(Configuration.DeliveryApiExtensions.IssueLinkRules);
 
         group.MapPost("/statements/{statementId}/download-links", IssueAsync)
+            .WithTags(Configuration.DeliveryApiOpenApi.Tags.DownloadLinks)
             .WithMetadata(new SkipIdempotencyAttribute("Response contains a secret"))
             .WithName("IssueDownloadLink")
             .WithSummary("Issues a single-use download link for one of the caller's own statements.")
@@ -134,6 +135,7 @@ public static class DownloadLinkEndpoints
             .ProducesProblem(StatusCodes.Status429TooManyRequests);
 
         group.MapDelete("/download-links/{linkId}", RevokeAsync)
+            .WithTags(Configuration.DeliveryApiOpenApi.Tags.DownloadLinks)
             .WithName("RevokeDownloadLink")
             .WithSummary("Revokes an unused download link immediately.")
             .WithDescription(

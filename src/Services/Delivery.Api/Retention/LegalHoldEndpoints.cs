@@ -43,21 +43,25 @@ public static class LegalHoldEndpoints
         ArgumentNullException.ThrowIfNull(app);
 
         _ = app.MapPost("/v1/statements/{statementId:guid}/legal-holds", PlaceOnStatementAsync)
+            .WithTags(global::Delivery.Api.Configuration.DeliveryApiOpenApi.Tags.LegalHolds)
             .RequireAuthorization(global::Delivery.Api.Configuration.DeliveryApiExtensions.StaffPolicy)
             .WithName("PlaceStatementLegalHold")
             .WithSummary("Places a legal hold on one statement, in the object store and the database.");
 
         _ = app.MapPost("/v1/customers/{customerId:guid}/legal-holds", PlaceOnCustomerAsync)
+            .WithTags(global::Delivery.Api.Configuration.DeliveryApiOpenApi.Tags.LegalHolds)
             .RequireAuthorization(global::Delivery.Api.Configuration.DeliveryApiExtensions.StaffPolicy)
             .WithName("PlaceCustomerLegalHold")
             .WithSummary("Places a legal hold on all of a customer's statements, present and future.");
 
         _ = app.MapDelete("/v1/legal-holds/{holdId:guid}", ReleaseAsync)
+            .WithTags(global::Delivery.Api.Configuration.DeliveryApiOpenApi.Tags.LegalHolds)
             .RequireAuthorization(global::Delivery.Api.Configuration.DeliveryApiExtensions.StaffPolicy)
             .WithName("ReleaseLegalHold")
             .WithSummary("Releases a hold. The row survives as the record that data was preserved.");
 
         _ = app.MapGet("/v1/legal-holds", ListAsync)
+            .WithTags(global::Delivery.Api.Configuration.DeliveryApiOpenApi.Tags.LegalHolds)
             .RequireAuthorization(global::Delivery.Api.Configuration.DeliveryApiExtensions.StaffPolicy)
             .WithName("ListLegalHolds")
             .WithSummary("Lists holds, keyset-paginated.");

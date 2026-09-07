@@ -104,8 +104,9 @@ clashes and run `up` again.
 | What | Where |
 | --- | --- |
 | Delivery API (authenticated) | <http://localhost:8081> |
-| Delivery API — OpenAPI / Scalar | <http://localhost:8081/scalar/v1> |
+| Delivery API — interactive docs (Scalar) | <http://localhost:8081/scalar/v1> |
 | Download Gateway (public) | <http://localhost:8082> |
+| Download Gateway — interactive docs (Scalar) | <http://localhost:8082/scalar/v1> |
 | Aspire Dashboard — traces, metrics, logs | <http://localhost:18888> |
 | MinIO Console | <http://localhost:9001> |
 | Mock core-banking ledger | <http://localhost:8083> |
@@ -140,24 +141,85 @@ Traces page fills in as soon as the walkthrough below makes its first request. T
 JSON log line on stdout matches the trace in the dashboard — that is the point of the
 correlation wiring.
 
+### Explore the API
+
+Once the stack is running, open the interactive API documentation. Every endpoint can be called
+directly from that page: no `curl`, no `jq`, and no difference between Windows, macOS and Linux.
+
+| Service | URL |
+| --- | --- |
+| Delivery API (authenticated: catalogue, links, operator surfaces) | <http://localhost:8081/scalar/v1> |
+| Download Gateway (public: redeems links) | <http://localhost:8082/scalar/v1> |
+
+The Delivery API page opens with a **Start here** block that repeats the walkthrough below, so it
+stands on its own without this README. Endpoints are grouped in the order you will use them:
+Start here, Statements, Download links, then the operator surfaces.
+
+**To authenticate:** every authenticated call needs a JWT, and in the Development environment
+there are two ways to get one, both signed with `JWT_DEV_SIGNING_KEY` from `.env`:
+
+- On the page: open `GET /v1/dev/tokens` under *Start here*, set `customerId` to the test customer
+  below, send it, and copy `accessToken` from the response. A plain `GET` of the same URL in a
+  browser tab also works: <http://localhost:8081/v1/dev/tokens?customerId=11111111-1111-1111-1111-111111111101>.
+- From a terminal: `./scripts/demo-token.sh` (bash) or `.\scripts\demo-token.ps1` (PowerShell).
+  Both print only the token, so they pipe cleanly; `staff` or `dpo` as the first argument adds the
+  operator or erasure scope, and a customer id as the second picks a different customer.
+
+Then paste the token into the **Bearer Token** box at the top of the Scalar page (under
+*Authentication*). It stays set for every request on the page, and survives a reload. (The `&staff=true` and `&staff=true&dpo=true` query flags on the token
+endpoint do the same as the script's `staff` and `dpo` arguments.)
+
+**Test customer:** `11111111-1111-1111-1111-111111111101`. It is seeded by the stack itself with
+one account and last month's statement, and the id is fixed, so it survives `docker compose down -v`
+and a rebuild. `…102` through `…110` are the same. The seed also adds twenty-five customers with
+random ids so the catalogue is not empty.
+
 ### See it work in five minutes
 
 The stack is up, and the `seed-demo` container has already done the seeding: wait for it to show
 `Exited (0)` in `docker compose ps -a` (about a minute after the services turn healthy; its log,
-`docker compose logs seed-demo`, ends with the ten customer ids). Nothing here needs the SDK or a
-script. The bash version uses `curl` and `jq`; the PowerShell version further down needs nothing
-extra.
+`docker compose logs seed-demo`, ends with the ten customer ids).
 
-The seed is thirty-five customers, of two kinds. Twenty-five come from the volume seed tool with
-random ids, for a catalogue that is not empty. The other **ten are demo customers with fixed,
-documented ids**, `11111111-1111-1111-1111-111111111101` through `…110`, each with one account,
-and the generation run produces last month's statement for every one of them. The walkthrough
-below uses the first; any of the ten works the same way.
+Everything below is clickable in Scalar. No terminal is needed until step 7.
 
-Every authenticated call needs a JWT, and the API mints one itself in the Development
-environment: `POST /v1/dev/tokens?customerId=…` (a plain `GET` of the same URL works too, so it
-can be opened in a browser). `&staff=true` adds the operator scope, `&staff=true&dpo=true` the
-erasure scope. Mint one for the first demo customer:
+1. **Get a token.** `GET /v1/dev/tokens` on the Scalar page with `customerId` =
+   `11111111-1111-1111-1111-111111111101`, or `./scripts/demo-token.sh`. Copy the token.
+2. **Authenticate.** Scalar → **Bearer Token** box at the top of the page → paste → done.
+3. **List statements.** `GET /v1/customers/{customerId}/statements`. The example values are already
+   the test customer and a twelve-month range ending today; tick `from` and `to` if the client has
+   them unticked. You get one statement: copy its `id` and `period.start`.
+4. **Issue a download link.** `POST /v1/statements/{statementId}/download-links` with that `id` and
+   `period` (the query parameter is required: it is the partition key). Copy the `url` from the
+   response.
+5. **Download it.** The `url` is on the Download Gateway, port 8082, not on the Scalar page's
+   service, so paste it into a **new browser tab**. A PDF downloads.
+6. > **Now paste the same URL again.**
+   >
+   > **It returns 404.** The link was single-use: it was consumed atomically on the first request
+   > and cannot be replayed. Expired, revoked, consumed and never-existed links all return the same
+   > 404, with the same timing floor, so the replay learns nothing.
+7. **See both attempts.** The audit chain *is* the access log, and it is not exposed to customers
+   by design, so this one step is a query from the repo root (needs Docker, nothing else):
+
+   ```bash
+   docker compose exec -T -e PGPASSWORD=local-dev-postgres-password postgres psql -U postgres -d statements -c \
+     "SELECT action, outcome, denial_reason_code FROM audit_event ORDER BY occurred_at DESC LIMIT 5;"
+   ```
+
+   The five most recent rows, newest first: `ACCESS_DENIED / CONSUMED` (the replay), then
+   `DOWNLOAD_COMPLETED`, `DOWNLOAD_STARTED`, `LINK_ISSUED`, and `STATEMENT_LIST_VIEWED`. The denial
+   carries no statement or customer id: the replay got the same 404 a random token would, and the
+   record does not confirm what the token pointed at either. A staff token can also run
+   `GET /v1/audit/verify` from Scalar to re-walk the hash chains.
+
+That is the core property. [docs/DEMO.md](docs/DEMO.md) continues from here: IDOR resistance,
+audit-chain verification and tamper rejection, and crypto-erasure ending in a `410`.
+
+#### The same five steps from a terminal
+
+The bash version uses `curl` and `jq`; the PowerShell version further down needs nothing extra.
+The API mints the token itself: `POST /v1/dev/tokens?customerId=…` (`&staff=true` adds the operator
+scope, `&staff=true&dpo=true` the erasure scope). Mint one for the first demo customer:
 
 ```bash
 export API=http://localhost:8081
@@ -228,9 +290,6 @@ try { Invoke-WebRequest $LINK -OutFile "$env:TEMP\replay.bin" -UseBasicParsing }
 # 5. Both attempts are in the audit trail. Run from the repo root: docker compose needs the compose file.
 docker compose exec -T -e PGPASSWORD=local-dev-postgres-password postgres psql -U postgres -d statements -c "SELECT action, outcome, denial_reason_code FROM audit_event WHERE statement_id='$STATEMENT_ID' OR (action='ACCESS_DENIED' AND occurred_at >= (SELECT max(occurred_at) FROM audit_event WHERE statement_id='$STATEMENT_ID')) ORDER BY occurred_at;"
 ```
-
-That is the core property. [docs/DEMO.md](docs/DEMO.md) continues from here: IDOR resistance,
-audit-chain verification and tamper rejection, and crypto-erasure ending in a `410`.
 
 Stop and wipe:
 
@@ -582,4 +641,6 @@ runs `ANALYZE` so the `EXPLAIN` output that goes into `docs/SCALE.md` means some
 | `load/` | k6 scenarios + the seed/export recipe |
 | `tests/` | Unit / Architecture / Security / Integration — the split the CI badge runs |
 | `tools/seed` | Deterministic volume seeding for the SCALE work; `--demo` is what the `seed-demo` container runs on `up` |
+| `scripts/` | `demo-token.sh` / `demo-token.ps1`: mint a development JWT from the key in `.env`, for the Bearer Token box on the Scalar page |
+| `docs/reviews/` | Fresh-session walkthrough reviews of the README, with what was missing and what changed |
 | `docs/DEMO.md` | The guided walkthrough that the five-minute path above starts |

@@ -44,7 +44,7 @@ app.MapDownloadEndpoints();
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
-    app.MapScalarApiReference();
+    app.MapScalarApiReference(options => options.WithTitle("Statement Download Gateway"));
 }
 
 await app.RunAsync().ConfigureAwait(false);

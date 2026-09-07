@@ -80,6 +80,7 @@ public static class StatementRunEndpoints
         ArgumentNullException.ThrowIfNull(app);
 
         RouteGroupBuilder group = app.MapGroup("/v1/statement-runs")
+            .WithTags(Configuration.DeliveryApiOpenApi.Tags.StatementRuns)
             .RequireAuthorization(Configuration.DeliveryApiExtensions.StaffPolicy);
 
         _ = group.MapPost("/", CreateAsync)

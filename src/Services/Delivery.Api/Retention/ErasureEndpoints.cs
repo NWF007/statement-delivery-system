@@ -40,11 +40,13 @@ public static class ErasureEndpoints
         ArgumentNullException.ThrowIfNull(app);
 
         _ = app.MapPost("/v1/customers/{customerId:guid}/erasure", RequestAsync)
+            .WithTags(global::Delivery.Api.Configuration.DeliveryApiOpenApi.Tags.Erasure)
             .RequireAuthorization(global::Delivery.Api.Configuration.DeliveryApiExtensions.DpoPolicy)
             .WithName("RequestErasure")
             .WithSummary("Schedules crypto-erasure with a seven-day cooling-off window, or explains why it cannot happen.");
 
         _ = app.MapDelete("/v1/customers/{customerId:guid}/erasure", CancelAsync)
+            .WithTags(global::Delivery.Api.Configuration.DeliveryApiOpenApi.Tags.Erasure)
             .RequireAuthorization(global::Delivery.Api.Configuration.DeliveryApiExtensions.DpoPolicy)
             .WithName("CancelErasure")
             .WithSummary("Cancels a scheduled erasure while the cooling-off window is open.");

@@ -295,6 +295,6 @@ public static class DeliveryApiExtensions
                     new HeaderApiVersionReader("X-Api-Version"));
             });
 
-        builder.Services.AddOpenApi();
+        builder.Services.AddOpenApi(DeliveryApiOpenApi.Configure);
     }
 }

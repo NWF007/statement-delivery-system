@@ -302,7 +302,7 @@ public static class DownloadGatewayExtensions
             options.ApiVersionReader = new UrlSegmentApiVersionReader();
         });
 
-        builder.Services.AddOpenApi();
+        builder.Services.AddOpenApi(DownloadGatewayOpenApi.Configure);
         builder.Services.AddOptions<Downloads.DownloadOptions>()
             .Bind(builder.Configuration.GetSection(Downloads.DownloadOptions.SectionName))
             .ValidateDataAnnotations()

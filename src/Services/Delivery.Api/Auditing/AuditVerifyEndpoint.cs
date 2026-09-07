@@ -62,6 +62,7 @@ public static class AuditVerifyEndpoint
         ArgumentNullException.ThrowIfNull(app);
 
         app.MapGet("/v1/audit/verify", VerifyAsync)
+            .WithTags(Configuration.DeliveryApiOpenApi.Tags.Audit)
             .RequireAuthorization(Configuration.DeliveryApiExtensions.StaffPolicy)
             .WithName("VerifyAuditChains")
             .WithSummary("Re-walks the audit hash chains and recomputes every hash.")

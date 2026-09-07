@@ -106,8 +106,20 @@ public static class DevTokenEndpoint
             });
         })
         .AllowAnonymous()
-        .ExcludeFromDescription()
-        .WithName("IssueDevelopmentToken");
+        .WithName("IssueDevelopmentToken")
+        .WithTags(DeliveryApiOpenApi.Tags.StartHere)
+        .WithSummary("Mints a development bearer token. Step 1 of the walkthrough.")
+        .WithDescription(
+            "DEVELOPMENT ONLY. Send this with `customerId` = `" + DeliveryApiOpenApi.DemoCustomerId + "` (seeded, "
+            + "with last month's statement), copy `accessToken` from the response, and paste it into the **Bearer Token** box at the top of "
+            + "this page (under *Authentication*). The token lasts one hour and its `sub` is the customer; every statement "
+            + "endpoint compares the route's customerId against it and answers 404 on a mismatch. "
+            + "`staff=true` adds the operator scope (audit, holds, runs); `staff=true&dpo=true` adds erasure. "
+            + "A plain GET of the same URL in a browser tab returns the same JSON. Refused outside Development twice over: "
+            + "the mapping is inside the Development guard, and JwtOptionsValidator will not start the service with a symmetric key elsewhere.")
+        .Produces(StatusCodes.Status200OK, contentType: "application/json")
+        .ProducesProblem(StatusCodes.Status400BadRequest)
+        .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
 
         return app;
     }

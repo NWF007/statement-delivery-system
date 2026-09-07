@@ -62,7 +62,12 @@ if (app.Environment.IsDevelopment())
     // Development only. The OpenAPI document enumerates the entire attack surface, and a public
     // API has no reason to publish that to unauthenticated callers.
     app.MapOpenApi();
-    app.MapScalarApiReference();
+    // Persistent authentication keeps the pasted token in the browser's local storage, so a page
+    // reload does not send the reviewer back to step 1. Development only, like the page itself.
+    app.MapScalarApiReference(options => options
+        .WithTitle("Statement Delivery API")
+        .AddPreferredSecuritySchemes(DeliveryApiOpenApi.BearerScheme)
+        .EnablePersistentAuthentication());
 
     // Development only, and guarded again inside: the endpoint cannot sign anything unless a
     // development signing key is configured, which JwtOptionsValidator forbids outside

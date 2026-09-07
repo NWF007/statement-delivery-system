@@ -23,11 +23,13 @@ public static class ReconciliationEndpoints
         ArgumentNullException.ThrowIfNull(app);
 
         _ = app.MapPost("/v1/admin/reconciliation/run", RunAsync)
+            .WithTags(global::Delivery.Api.Configuration.DeliveryApiOpenApi.Tags.Reconciliation)
             .RequireAuthorization(global::Delivery.Api.Configuration.DeliveryApiExtensions.StaffPolicy)
             .WithName("RequestReconciliation")
             .WithSummary("Enqueues a reconciliation run. The retention worker executes it.");
 
         _ = app.MapGet("/v1/admin/reconciliation/latest", LatestAsync)
+            .WithTags(global::Delivery.Api.Configuration.DeliveryApiOpenApi.Tags.Reconciliation)
             .RequireAuthorization(global::Delivery.Api.Configuration.DeliveryApiExtensions.StaffPolicy)
             .WithName("LatestReconciliation")
             .WithSummary("The most recent completed run and its findings.");
