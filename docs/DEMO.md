@@ -16,15 +16,23 @@ docker compose up --build -d
 ./scripts/seed-demo.sh          # ~1 minute: seeds 25 customers, runs REAL generation for last month
 ```
 
-The script is safe to re-run (an already-seeded database is detected and skipped). It ends by
-printing a `CUSTOMER_ID`, `STATEMENT_ID` and `PERIOD`; export them, then mint two tokens:
+The script is safe to re-run (an already-seeded database is detected and skipped). It always
+creates the documented demo customer, `11111111-1111-1111-1111-111111111111`, and the generation
+run produces last month's statement for it. Mint two tokens, then read that statement's id and
+period from the API:
 
 ```bash
 export API=http://localhost:8081 GW=http://localhost:8082
-export CUSTOMER_ID=... STATEMENT_ID=... PERIOD=...
+export CUSTOMER_ID=11111111-1111-1111-1111-111111111111
 export TOKEN=$(./scripts/demo-token.sh "$CUSTOMER_ID")           # that customer
 export STAFF=$(./scripts/demo-token.sh "$CUSTOMER_ID" staff)     # plus the operator scope
+LIST=$(curl -fsS "$API/v1/customers/$CUSTOMER_ID/statements?from=$(( $(date +%Y) - 1 ))-01-01&to=$(date +%Y-%m-%d)" \
+  -H "Authorization: Bearer $TOKEN")
+export STATEMENT_ID=$(echo "$LIST" | jq -r '.items[0].id')
+export PERIOD=$(echo "$LIST" | jq -r '.items[0].period.start')
 ```
+
+The script also prints the same three values at the end, if you would rather paste them.
 
 `demo-token.sh` calls the API's own `POST /v1/dev/tokens`, which exists only in the Development
 environment; the signing key never leaves the service.

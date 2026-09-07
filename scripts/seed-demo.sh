@@ -63,6 +63,19 @@ else
   dotnet run --project tools/seed -c Release -- --customers 25 --months 3 --seed 7
 fi
 
+# A customer with a FIXED, documented id, so the README can name it instead of asking the reader
+# to paste one. Idempotent: the same rows on every run. The account id hashes to "known" in the
+# mock ledger (LedgerGenerator.IsKnown), so the generation run renders a real statement for it.
+DEMO_CUSTOMER_ID="11111111-1111-1111-1111-111111111111"
+psql_statements -c "
+  INSERT INTO customer (id, external_ref, status)
+  VALUES ('$DEMO_CUSTOMER_ID', 'DEMO-CUSTOMER', 'ACTIVE')
+  ON CONFLICT (id) DO NOTHING;
+  INSERT INTO account (id, customer_id, account_number_masked, product_type, status, opened_at, closed_at)
+  VALUES ('11111111-1111-1111-1111-111111111112', '$DEMO_CUSTOMER_ID', '****1111', 'CURRENT', 'ACTIVE', '2020-01-01T00:00:00Z', NULL)
+  ON CONFLICT (id) DO NOTHING;" > /dev/null
+echo "   demo customer $DEMO_CUSTOMER_ID is in place"
+
 echo "== 3/4 requesting a generation run for last month (real render -> encrypt -> upload)"
 STAFF_TOKEN=$(curl -fsS -X POST \
   "$API/v1/dev/tokens?customerId=00000000-0000-0000-0000-000000000001&staff=true" \
@@ -101,11 +114,12 @@ PRUNED=$(psql_statements -c "
 echo "   removed $PRUNED seed-only statement rows (no object behind them)"
 
 echo
-echo "Demo-ready. A customer and one of their generated statements:"
+echo "Demo-ready. The documented demo customer and their generated statement:"
 psql_statements -c "
   SELECT 'CUSTOMER_ID=' || s.customer_id || E'\nSTATEMENT_ID=' || s.id || E'\nPERIOD=' || s.period_start
     FROM statement s
     JOIN statement_run_item r ON r.statement_id = s.id
    WHERE s.status = 'AVAILABLE' AND s.period_start = '$PERIOD_START'
+     AND s.customer_id = '$DEMO_CUSTOMER_ID'
    ORDER BY s.id LIMIT 1;"
-echo "Mint a customer token:  TOKEN=\$(./scripts/demo-token.sh <CUSTOMER_ID>)"
+echo "Mint a customer token:  TOKEN=\$(./scripts/demo-token.sh $DEMO_CUSTOMER_ID)"

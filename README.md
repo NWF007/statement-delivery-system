@@ -139,11 +139,13 @@ host (the seed tool is a .NET project), `jq`, and bash.
 ./scripts/seed-demo.sh          # ~1 minute: 25 customers, then a REAL generation run for last month
 ```
 
-The script ends by printing three values. Export them, then mint a token for that customer:
+The seed always creates one customer with a fixed, documented id,
+**`11111111-1111-1111-1111-111111111111`**, and the generation run produces last month's statement
+for it. Nothing needs to be copied out of the script's output. Mint a token for that customer:
 
 ```bash
 export API=http://localhost:8081
-export CUSTOMER_ID=... STATEMENT_ID=... PERIOD=...        # paste the three printed values
+export CUSTOMER_ID=11111111-1111-1111-1111-111111111111
 TOKEN=$(./scripts/demo-token.sh "$CUSTOMER_ID")           # a one-hour dev JWT, minted by the API
 ```
 
@@ -152,8 +154,11 @@ environment. Every authenticated call below carries that token:
 
 ```bash
 # 1. The customer's catalogue (the date range is mandatory; it is what prunes partitions)
-curl -fsS "$API/v1/customers/$CUSTOMER_ID/statements?from=$PERIOD&to=$(date +%Y-%m-%d)" \
-  -H "Authorization: Bearer $TOKEN" | jq '.items[0] | {id, period, status}'
+LIST=$(curl -fsS "$API/v1/customers/$CUSTOMER_ID/statements?from=$(( $(date +%Y) - 1 ))-01-01&to=$(date +%Y-%m-%d)" \
+  -H "Authorization: Bearer $TOKEN")
+echo "$LIST" | jq '.items[0] | {id, period, status}'
+STATEMENT_ID=$(echo "$LIST" | jq -r '.items[0].id')            # last month's statement
+PERIOD=$(echo "$LIST" | jq -r '.items[0].period.start')
 
 # 2. Issue a single-use link
 LINK=$(curl -fsS -X POST "$API/v1/statements/$STATEMENT_ID/download-links?period=$PERIOD" \
