@@ -201,8 +201,11 @@ than silently. To run the split for real:
 docker compose --profile replica up -d postgres-replica
 ```
 
-then set `POSTGRES_REPLICA_CONNECTION` for the services that should use it; `.env.example` has the
-connection string. Note that `ReadEventual` is for catalogue reads only: a read that gates an access
+then set `POSTGRES_REPLICA_CONNECTION` in `.env` for the services that should use it (`.env.example`
+has the connection string) and `docker compose up -d` again; the startup warning disappears and
+catalogue reads arrive on the replica. The primary admits replication through a first-init hook
+(`deploy/postgres/init-replication.sh`), so a data directory created before that hook existed
+needs `docker compose down -v` once. Note that `ReadEventual` is for catalogue reads only: a read that gates an access
 decision must run inside the caller's transaction, which is ADR-0024 and is enforced by an
 architecture test.
 

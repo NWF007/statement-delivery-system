@@ -88,6 +88,8 @@ services:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      # First-init hook that lets the opt-in replica stream from this primary; see the script.
+      - ./deploy/postgres/init-replication.sh:/docker-entrypoint-initdb.d/10-replication.sh:ro
     healthcheck:
       # pg_isready, not a query: the question is "is the server accepting connections", and a
       # health check that runs SQL becomes part of the load during an incident.
@@ -110,7 +112,10 @@ services:
     environment:
       PGPASSWORD: ${POSTGRES_PASSWORD}
     # Clones the primary on first start, then runs as a hot standby. -R writes standby.signal and
-    # primary_conninfo, which is what makes it stream rather than sit as a frozen copy.
+    # primary_conninfo, which is what makes it stream rather than sit as a frozen copy. The hand-off
+    # goes through the image's own entrypoint, which drops to the postgres user itself and skips
+    # initdb because PG_VERSION now exists - so this never depends on which privilege-drop tool
+    # (su-exec, gosu) a given image version happens to ship.
     command:
       - sh
       - -c
@@ -122,7 +127,9 @@ services:
           chown -R postgres:postgres /var/lib/postgresql/data
           chmod 0700 /var/lib/postgresql/data
         fi
-        exec su-exec postgres postgres
+        # A standby refuses to start with a lower max_connections than its primary, and the primary
+        # sets 200 on its command line rather than in the postgresql.conf the base backup copied.
+        exec docker-entrypoint.sh postgres -c max_connections=200
     volumes:
       - postgres-replica-data:/var/lib/postgresql/data
     healthcheck:
