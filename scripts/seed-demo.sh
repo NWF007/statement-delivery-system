@@ -53,7 +53,7 @@ for url in "$API/health/ready" "${GATEWAY_URL:-http://localhost:8082}/health/rea
   until curl -fsS "$url" > /dev/null 2>&1; do sleep 2; done
 done
 
-echo "== 2/4 seeding 25 customers (deterministic: --seed 7)"
+echo "== 2/4 seeding 25 background customers (deterministic: --seed 7) plus the ten demo customers"
 # The seed tool is a bulk COPY and is not idempotent: a second run would fail on the customer
 # external_ref unique constraint. Detect the earlier run instead of failing on it.
 EXISTING=$(psql_statements -c "SELECT count(*) FROM customer WHERE external_ref LIKE 'EXT-7-%';" | tr -d '[:space:]')

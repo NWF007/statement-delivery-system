@@ -2,6 +2,10 @@
 
 [![CI](https://github.com/NWF007/statement-delivery-system/actions/workflows/ci.yml/badge.svg)](https://github.com/NWF007/statement-delivery-system/actions/workflows/ci.yml)
 
+> **Want to run it first?** `cp .env.example .env && docker compose up --build`, then
+> [see it work in five minutes](#see-it-work-in-five-minutes). Prerequisites are in the
+> [Quickstart](#quickstart). The design case starts just below.
+
 Account statements are among the most sensitive documents a bank holds, and they are subject to
 a seven-year regulatory retention period. This platform generates them at a scale of roughly
 **30 million a month**, stores them encrypted under a **write-once compliance lock**, and
@@ -133,13 +137,16 @@ that is the point of the correlation wiring.
 ### See it work in five minutes
 
 The stack is up. Now watch a single-use link get consumed. This part needs the .NET 10 SDK on the
-host (the seed tool is a .NET project), `jq`, and bash.
+host (the seed tool is a .NET project) and either bash with `jq`, or PowerShell (no `jq`; the
+variant is below the bash one). There is no need to wait after `up`: the seed script polls both
+readiness endpoints itself before it does anything.
 
 ```bash
-./scripts/seed-demo.sh          # ~1 minute: 25 customers, then a REAL generation run for last month
+./scripts/seed-demo.sh          # ~1 minute: 35 customers, then a REAL generation run for last month
 ```
 
-The seed always creates **ten demo customers with fixed, documented ids**,
+Thirty-five customers, of two kinds. Twenty-five come from the volume seed tool with random ids,
+for a catalogue that is not empty. The other **ten are demo customers with fixed, documented ids**,
 `11111111-1111-1111-1111-111111111101` through `…110`, each with one account, and the generation
 run produces last month's statement for every one of them. Nothing needs to be copied out of the
 script's output; the walkthrough below uses the first, and any of the ten works the same way.
@@ -181,8 +188,35 @@ docker compose exec -T -e PGPASSWORD=local-dev-postgres-password postgres psql -
 Expected at step 5: `STATEMENT_GENERATED`, `LINK_ISSUED`, `DOWNLOAD_STARTED`, `DOWNLOAD_COMPLETED`,
 then `ACCESS_DENIED` with `denial_reason_code = CONSUMED` and an empty `statement_id`. That last
 row is deliberately anonymous: the replay got the same 404 a random token would get, and the
-denial record does not confirm what the token pointed at either. From PowerShell,
-`$TOKEN = .\scripts\demo-token.ps1 $CUSTOMER_ID` and `curl.exe` do the same job.
+denial record does not confirm what the token pointed at either.
+
+The same five steps from PowerShell, with no `jq`:
+
+```powershell
+$API = "http://localhost:8081"
+$CUSTOMER_ID = "11111111-1111-1111-1111-111111111101"
+$TOKEN = .\scripts\demo-token.ps1 $CUSTOMER_ID
+$H = @{ Authorization = "Bearer $TOKEN" }
+$from = "{0}-01-01" -f ((Get-Date).Year - 1); $to = Get-Date -Format yyyy-MM-dd
+
+# 1. The customer's catalogue
+$list = Invoke-RestMethod "$API/v1/customers/$CUSTOMER_ID/statements?from=$from&to=$to" -Headers $H
+$list.items[0] | Select-Object id, status, @{ n = 'period'; e = { $_.period.start } }
+$STATEMENT_ID = $list.items[0].id; $PERIOD = $list.items[0].period.start
+
+# 2. Issue a single-use link
+$LINK = (Invoke-RestMethod -Method Post "$API/v1/statements/$STATEMENT_ID/download-links?period=$PERIOD" `
+  -Headers $H -ContentType 'application/json' -Body '{}').url
+
+# 3. Redeem it: a real PDF (the size in bytes is printed)
+Invoke-WebRequest $LINK -OutFile statement.pdf -UseBasicParsing; (Get-Item statement.pdf).Length
+
+# 4. Redeem it again: prints 404
+try { Invoke-WebRequest $LINK -OutFile "$env:TEMP\replay.bin" -UseBasicParsing } catch { $_.Exception.Response.StatusCode.value__ }
+
+# 5. Both attempts are in the audit trail
+docker compose exec -T -e PGPASSWORD=local-dev-postgres-password postgres psql -U postgres -d statements -c "SELECT action, outcome, denial_reason_code FROM audit_event WHERE statement_id='$STATEMENT_ID' OR action='ACCESS_DENIED' ORDER BY occurred_at;"
+```
 
 That is the core property. [docs/DEMO.md](docs/DEMO.md) continues from here: IDOR resistance,
 audit-chain verification and tamper rejection, and crypto-erasure ending in a `410`.
@@ -451,6 +485,13 @@ daemon the integration project reports **14 passed, 163 skipped**; that is the e
 not a broken run. The 163 need Testcontainers and run automatically when Docker is available; with
 it, the integration project starts its own PostgreSQL and MinIO containers and takes **about 20
 minutes** on a four-core laptop, most of it silent. The other three projects finish in seconds.
+
+Short on time with Docker running? The three fast suites take about thirty seconds together and
+cover the domain, the architecture rules and the configuration controls:
+
+```bash
+for p in UnitTests ArchitectureTests SecurityTests; do dotnet test --project tests/$p/$p.csproj; done
+```
 
 No SDK on the host? The build image runs the fast suites unchanged (the integration suite needs
 the Docker socket as well, so run that one on the host):
