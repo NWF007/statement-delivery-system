@@ -444,7 +444,13 @@ public static class ServiceDefaultsExtensions
             utcNow = time.GetUtcNow().UtcDateTime,
         }))
         .WithName("Ping")
+
+        // A named tag, or the OpenAPI generator files it under the assembly name ("Delivery.Api",
+        // "Download.Gateway"), which reads as a stray group on the Scalar page.
+        .WithTags("Operations")
         .WithSummary("Liveness diagnostic returning the build and environment this instance is running.")
+        .WithDescription("Anonymous. Returns the service name, version, environment, instance id and the current UTC time. "
+                       + "Useful for confirming which build answered and that the clock is sane; the health probes (`/health/live`, `/health/ready`) are separate and not listed here.")
         .AllowAnonymous();
 
         return app;

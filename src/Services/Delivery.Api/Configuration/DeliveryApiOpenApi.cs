@@ -45,6 +45,9 @@ public static class DeliveryApiOpenApi
         public const string Restore = "Restore";
         public const string Reconciliation = "Reconciliation";
         public const string StatementRuns = "Statement runs";
+
+        /// <summary>Shared with the gateway: <c>/ping</c> is mapped by ServiceDefaults under this name.</summary>
+        public const string Operations = "Operations";
     }
 
     private static readonly (string Name, string Description)[] OrderedTags =
@@ -58,6 +61,7 @@ public static class DeliveryApiOpenApi
         (Tags.Restore, "Cold-storage restores. 202 means the request is queued."),
         (Tags.Reconciliation, "Staff scope. Enqueue a reconciliation run and read its findings."),
         (Tags.StatementRuns, "Staff scope. Batch generation runs and their quarantined failures."),
+        (Tags.Operations, "Anonymous diagnostics. `/health/live` and `/health/ready` exist too but are kept out of this document."),
     ];
 
     /// <summary>Registers the document and operation transformers.</summary>
@@ -68,6 +72,66 @@ public static class DeliveryApiOpenApi
 
         options.AddDocumentTransformer(DescribeDocumentAsync);
         options.AddOperationTransformer(DescribeOperationAsync);
+        options.AddSchemaTransformer(ExampleSchemaAsync);
+    }
+
+    /// <summary>
+    /// Realistic example bodies for the walkthrough's responses. Without these Scalar renders
+    /// <c>"id": "string"</c> and <c>"status": "string"</c>, which tells a reader nothing about
+    /// what comes back. The values mirror what the demo seed actually produces.
+    /// </summary>
+    private static Task ExampleSchemaAsync(OpenApiSchema schema, OpenApiSchemaTransformerContext context, CancellationToken cancellationToken)
+    {
+        DateOnly today = DateOnly.FromDateTime(DateTime.UtcNow);
+        DateOnly lastMonth = new DateOnly(today.Year, today.Month, 1).AddMonths(-1);
+        string start = lastMonth.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+        string end = lastMonth.AddMonths(1).AddDays(-1).ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+
+        JsonObject Statement() => new()
+        {
+            ["id"] = "01a07c93-5d9d-74b4-a08b-ec335018ec9d",
+            ["accountId"] = "22222222-2222-2222-2222-222222222201",
+            ["period"] = new JsonObject { ["start"] = start, ["end"] = end },
+            ["version"] = 1,
+            ["status"] = "AVAILABLE",
+            ["sizeBytes"] = 58975,
+            ["generatedAt"] = today.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc).ToString("O", System.Globalization.CultureInfo.InvariantCulture),
+        };
+
+        switch (context.JsonTypeInfo.Type.Name)
+        {
+            case "StatementResponse":
+                schema.Example = Statement();
+                break;
+
+            case "PeriodResponse":
+                schema.Example = new JsonObject { ["start"] = start, ["end"] = end };
+                break;
+
+            case "StatementPageResponse":
+                schema.Example = new JsonObject
+                {
+                    ["items"] = new JsonArray(Statement()),
+                    ["nextCursor"] = null,
+                    ["hasMore"] = false,
+                };
+                break;
+
+            case "IssueLinkResponse":
+                schema.Example = new JsonObject
+                {
+                    ["linkId"] = "01a07c96-279b-7421-ac56-ce9138149251",
+                    ["url"] = "http://localhost:8082/v1/d/5M8uS68ckqqpZ1QKv4spnu7nALqRwaPK1iBfRg8TrmI",
+                    ["expiresAt"] = DateTime.UtcNow.AddMinutes(10).ToString("O", System.Globalization.CultureInfo.InvariantCulture),
+                    ["singleUse"] = true,
+                };
+                break;
+
+            default:
+                break;
+        }
+
+        return Task.CompletedTask;
     }
 
     private static Task DescribeDocumentAsync(OpenApiDocument document, OpenApiDocumentTransformerContext context, CancellationToken cancellationToken)
@@ -157,6 +221,37 @@ public static class DeliveryApiOpenApi
             && context.Description.RelativePath?.EndsWith("/download-links", StringComparison.Ordinal) == true)
         {
             json.Example = new JsonObject { ["ttlSeconds"] = 600 };
+        }
+
+        // One endpoint answers GET and POST, so both operations inherit one summary and the
+        // sidebar shows the same sentence twice. Tell them apart, and show the response shape:
+        // the handler returns an anonymous object, so the document has no schema for it.
+        if (context.Description.RelativePath?.Equals("v1/dev/tokens", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            operation.Summary = string.Equals(context.Description.HttpMethod, "POST", StringComparison.OrdinalIgnoreCase)
+                ? "Mint a development token (POST, for scripts and curl)"
+                : "Mint a development token (GET, also works pasted into a browser tab)";
+
+            if (operation.Responses is not null
+                && operation.Responses.TryGetValue("200", out IOpenApiResponse? ok)
+                && ok is OpenApiResponse okResponse)
+            {
+                okResponse.Content ??= new Dictionary<string, OpenApiMediaType>(StringComparer.Ordinal);
+                if (!okResponse.Content.TryGetValue("application/json", out OpenApiMediaType? media))
+                {
+                    media = new OpenApiMediaType();
+                    okResponse.Content["application/json"] = media;
+                }
+
+                media.Example = new JsonObject
+                {
+                    ["accessToken"] = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMTExMTExMS0xMTExLTExMTEtMTExMS0xMTExMTExMTExMDEifQ.example-signature",
+                    ["tokenType"] = "Bearer",
+                    ["expiresInSeconds"] = 3600,
+                    ["subject"] = DemoCustomerId,
+                    ["scope"] = null,
+                };
+            }
         }
 
         return Task.CompletedTask;

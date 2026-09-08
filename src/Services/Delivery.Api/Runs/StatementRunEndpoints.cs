@@ -85,19 +85,32 @@ public static class StatementRunEndpoints
 
         _ = group.MapPost("/", CreateAsync)
             .WithName("CreateStatementRun")
-            .WithSummary("Requests a batch generation run for a period. Idempotent per period.");
+            .WithSummary("Requests a batch generation run for a period. Idempotent per period.")
+            .WithDescription(
+                "Staff scope. Writes the run row for a statement period; the generation worker's orchestrator plans and executes it. "
+                + "One run per period: a second request for the same period returns the existing run instead of creating another. "
+                + "The `seed-demo` container issued last month's run at startup, which is where the seeded statement came from.");
 
         _ = group.MapGet("/{runId:guid}", GetAsync)
             .WithName("GetStatementRun")
-            .WithSummary("Run status and progress counters.");
+            .WithSummary("Run status and progress counters.")
+            .WithDescription(
+                "Staff scope. The run's lifecycle state and its counters: planned, succeeded, failed and quarantined items. "
+                + "Poll it after `POST /v1/statement-runs` to watch a run converge.");
 
         _ = group.MapGet("/{runId:guid}/failures", ListFailuresAsync)
             .WithName("ListRunFailures")
-            .WithSummary("Quarantined items, keyset-paginated.");
+            .WithSummary("Quarantined items, keyset-paginated.")
+            .WithDescription(
+                "Staff scope. Items the worker gave up on after its retry budget, with the last error each recorded. "
+                + "Pass the opaque `nextCursor` from the previous page.");
 
         _ = group.MapPost("/{runId:guid}/failures/retry", RetryFailuresAsync)
             .WithName("RetryRunFailures")
-            .WithSummary("Resets quarantined items for a fresh round of attempts. A deliberate operator action.");
+            .WithSummary("Resets quarantined items for a fresh round of attempts. A deliberate operator action.")
+            .WithDescription(
+                "Staff scope. Moves the run's quarantined items back to pending so the worker picks them up again with a fresh retry "
+                + "budget. Audited in the same transaction as the reset, so the trail shows who re-opened the run and when.");
 
         return app;
     }

@@ -167,7 +167,13 @@ there are two ways to get one, both signed with `JWT_DEV_SIGNING_KEY` from `.env
 
 Then paste the token into the **Bearer Token** box at the top of the Scalar page (under
 *Authentication*). It stays set for every request on the page, and survives a reload. (The `&staff=true` and `&staff=true&dpo=true` query flags on the token
-endpoint do the same as the script's `staff` and `dpo` arguments.)
+endpoint do the same as the script's `staff` and `dpo` arguments.) Two things worth knowing:
+
+- The token is about 320 characters and the response pane clips it. Click into the `accessToken`
+  value and select all of it, or switch the pane to **Raw**; a partial paste gets a 401.
+- Scalar keeps the box in the browser's local storage, so if this browser has seen the stack
+  before, the box may already hold a token from an earlier session. Tokens last one hour: clear the
+  box with its × and paste a fresh one if a request answers 401.
 
 **Test customer:** `11111111-1111-1111-1111-111111111101`. It is seeded by the stack itself with
 one account and last month's statement, and the id is fixed, so it survives `docker compose down -v`
@@ -183,7 +189,8 @@ The stack is up, and the `seed-demo` container has already done the seeding: wai
 Everything below is clickable in Scalar. No terminal is needed until step 7.
 
 1. **Get a token.** `GET /v1/dev/tokens` on the Scalar page with `customerId` =
-   `11111111-1111-1111-1111-111111111101`, or `./scripts/demo-token.sh`. Copy the token.
+   `11111111-1111-1111-1111-111111111101`, or `./scripts/demo-token.sh`. Copy the whole token
+   (it is long and the response pane clips it).
 2. **Authenticate.** Scalar → **Bearer Token** box at the top of the page → paste → done.
 3. **List statements.** `GET /v1/customers/{customerId}/statements`. The example values are already
    the test customer and a twelve-month range ending today; tick `from` and `to` if the client has

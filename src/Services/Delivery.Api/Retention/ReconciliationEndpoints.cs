@@ -26,13 +26,20 @@ public static class ReconciliationEndpoints
             .WithTags(global::Delivery.Api.Configuration.DeliveryApiOpenApi.Tags.Reconciliation)
             .RequireAuthorization(global::Delivery.Api.Configuration.DeliveryApiExtensions.StaffPolicy)
             .WithName("RequestReconciliation")
-            .WithSummary("Enqueues a reconciliation run. The retention worker executes it.");
+            .WithSummary("Enqueues a reconciliation run. The retention worker executes it.")
+            .WithDescription(
+                "Staff scope. Reconciliation compares the database's view of retention, holds and object locks against the object store "
+                + "itself, over bounded samples. This service holds no read credentials for the store, so the API only writes the run "
+                + "request and answers 202 with its id; the leader-elected retention worker performs the checks and records the findings.");
 
         _ = app.MapGet("/v1/admin/reconciliation/latest", LatestAsync)
             .WithTags(global::Delivery.Api.Configuration.DeliveryApiOpenApi.Tags.Reconciliation)
             .RequireAuthorization(global::Delivery.Api.Configuration.DeliveryApiExtensions.StaffPolicy)
             .WithName("LatestReconciliation")
-            .WithSummary("The most recent completed run and its findings.");
+            .WithSummary("The most recent completed run and its findings.")
+            .WithDescription(
+                "Staff scope. The latest completed run with its per-check findings, such as an object that is over-protected after a "
+                + "crash between the two halves of a legal-hold placement. 404 until the first run has completed.");
 
         return app;
     }

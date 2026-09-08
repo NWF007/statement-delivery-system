@@ -46,25 +46,40 @@ public static class LegalHoldEndpoints
             .WithTags(global::Delivery.Api.Configuration.DeliveryApiOpenApi.Tags.LegalHolds)
             .RequireAuthorization(global::Delivery.Api.Configuration.DeliveryApiExtensions.StaffPolicy)
             .WithName("PlaceStatementLegalHold")
-            .WithSummary("Places a legal hold on one statement, in the object store and the database.");
+            .WithSummary("Places a legal hold on one statement, in the object store and the database.")
+            .WithDescription(
+                "Staff scope. The hold is set on the object-store copy FIRST, then recorded in the database, so a crash between "
+                + "the two leaves the object over-protected and visible to reconciliation, never unprotected. While held, the statement "
+                + "outranks retention purges, Object Lock expiry and customer erasure. Requires a case reference in the body.");
 
         _ = app.MapPost("/v1/customers/{customerId:guid}/legal-holds", PlaceOnCustomerAsync)
             .WithTags(global::Delivery.Api.Configuration.DeliveryApiOpenApi.Tags.LegalHolds)
             .RequireAuthorization(global::Delivery.Api.Configuration.DeliveryApiExtensions.StaffPolicy)
             .WithName("PlaceCustomerLegalHold")
-            .WithSummary("Places a legal hold on all of a customer's statements, present and future.");
+            .WithSummary("Places a legal hold on all of a customer's statements, present and future.")
+            .WithDescription(
+                "Staff scope. One hold row that the policy engine applies to every statement the customer has now and every one "
+                + "generated later. A customer under hold cannot be crypto-erased: `POST /v1/customers/{customerId}/erasure` answers 409 "
+                + "and cites the case reference.");
 
         _ = app.MapDelete("/v1/legal-holds/{holdId:guid}", ReleaseAsync)
             .WithTags(global::Delivery.Api.Configuration.DeliveryApiOpenApi.Tags.LegalHolds)
             .RequireAuthorization(global::Delivery.Api.Configuration.DeliveryApiExtensions.StaffPolicy)
             .WithName("ReleaseLegalHold")
-            .WithSummary("Releases a hold. The row survives as the record that data was preserved.");
+            .WithSummary("Releases a hold. The row survives as the record that data was preserved.")
+            .WithDescription(
+                "Staff scope. Release inverts the placement order: the database row is closed first, the object-store hold second. "
+                + "The row is never deleted; it is the evidence that the data was preserved for the case. 204 on release; 404 for an "
+                + "unknown or already-released hold.");
 
         _ = app.MapGet("/v1/legal-holds", ListAsync)
             .WithTags(global::Delivery.Api.Configuration.DeliveryApiOpenApi.Tags.LegalHolds)
             .RequireAuthorization(global::Delivery.Api.Configuration.DeliveryApiExtensions.StaffPolicy)
             .WithName("ListLegalHolds")
-            .WithSummary("Lists holds, keyset-paginated.");
+            .WithSummary("Lists holds, keyset-paginated.")
+            .WithDescription(
+                "Staff scope. Active and released holds, newest first. Pass the opaque `nextCursor` from the previous page; "
+                + "there is no OFFSET paging anywhere in this API.");
 
         return app;
     }

@@ -15,6 +15,9 @@ public static class DownloadGatewayOpenApi
     /// <summary>The single tag the redemption endpoint sits under.</summary>
     public const string DownloadsTag = "Downloads";
 
+    /// <summary>The tag ServiceDefaults puts <c>/ping</c> under; listed last.</summary>
+    public const string OperationsTag = "Operations";
+
     /// <summary>Registers the document transformer.</summary>
     /// <param name="options">The OpenAPI options for the <c>v1</c> document.</param>
     public static void Configure(OpenApiOptions options)
@@ -45,11 +48,17 @@ public static class DownloadGatewayOpenApi
                     Name = DownloadsTag,
                     Description = "Redeem a single-use link. Try it twice: the second attempt is a 404 by design.",
                 },
+                new()
+                {
+                    Name = OperationsTag,
+                    Description = "Anonymous diagnostics. `/health/live` and `/health/ready` exist too but are kept out of this document.",
+                },
             };
 
             foreach (OpenApiTag tag in document.Tags ?? new HashSet<OpenApiTag>())
             {
-                if (!string.Equals(tag.Name, DownloadsTag, StringComparison.Ordinal))
+                if (!string.Equals(tag.Name, DownloadsTag, StringComparison.Ordinal)
+                    && !string.Equals(tag.Name, OperationsTag, StringComparison.Ordinal))
                 {
                     _ = tags.Add(tag);
                 }
