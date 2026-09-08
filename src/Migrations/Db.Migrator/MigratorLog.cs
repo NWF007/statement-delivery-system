@@ -46,4 +46,22 @@ internal static partial class MigratorLog
         Level = LogLevel.Information,
         Message = "Applied {AppliedCount} migration(s) successfully.")]
     public static partial void MigrationsApplied(ILogger logger, int appliedCount);
+
+    [LoggerMessage(
+        EventId = 5005,
+        Level = LogLevel.Warning,
+        Message = "PostgreSQL is not accepting connections yet (attempt {Attempt} of {MaxAttempts}): {Reason}. Retrying in {DelaySeconds}s.")]
+    public static partial void WaitingForDatabase(ILogger logger, int attempt, int maxAttempts, string reason, int delaySeconds);
+
+    [LoggerMessage(
+        EventId = 5006,
+        Level = LogLevel.Critical,
+        Message = "PostgreSQL did not accept a connection within {MaxAttempts} attempts. Giving up.")]
+    public static partial void DatabaseUnreachable(ILogger logger, Exception exception, int maxAttempts);
+
+    [LoggerMessage(
+        EventId = 5007,
+        Level = LogLevel.Critical,
+        Message = "The migrator stopped on an unexpected error. The schema is unchanged beyond any script already reported as applied.")]
+    public static partial void UnexpectedFailure(ILogger logger, Exception exception);
 }

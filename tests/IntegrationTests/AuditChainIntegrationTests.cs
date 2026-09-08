@@ -243,11 +243,39 @@ public sealed class AuditChainIntegrationTests
         }
     }
 
+    /// <summary>
+    /// Guarantees <c>audit_event</c> holds at least one row before a trigger assertion runs.
+    /// </summary>
+    /// <remarks>
+    /// The update and delete guards are ROW-level BEFORE triggers, and a row-level trigger never
+    /// fires on an empty table: <c>DELETE FROM audit_event</c> against zero rows is <c>DELETE 0</c>
+    /// with no error at all. The trigger tests therefore only proved anything when a sibling test
+    /// had happened to append first, and failed deterministically when they ran ahead of it. One
+    /// real append through the writer removes the ordering dependency. (TRUNCATE has its own
+    /// statement-level trigger, which is why that test never needed this.)
+    /// </remarks>
+    private async Task EnsureAuditEventHasARowAsync(CancellationToken cancellationToken)
+    {
+        NpgsqlConnectionFactory factory = _postgres.ConnectionFactoryFor("app_generation");
+        await using (factory.ConfigureAwait(false))
+        {
+            await using NpgsqlConnection connection =
+                await factory.OpenAsync(ConnectionIntent.Write, cancellationToken).ConfigureAwait(true);
+            await using NpgsqlTransaction transaction =
+                await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(true);
+            _ = await Writer(factory)
+                .AppendAsync(Entry(Guid.CreateVersion7(), Guid.CreateVersion7(), 0), transaction, cancellationToken)
+                .ConfigureAwait(true);
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(true);
+        }
+    }
+
     [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]
     public async Task Update_IsRejectedByTrigger()
     {
         // Run as the SUPERUSER, so the grant cannot be what refuses it. This isolates the trigger:
         // the two mechanisms are independent, and each must work on its own.
+        await EnsureAuditEventHasARowAsync(TestContext.Current.CancellationToken).ConfigureAwait(true);
         await using NpgsqlConnection connection = await _postgres.OpenAdminAsync(TestContext.Current.CancellationToken).ConfigureAwait(true);
 
         PostgresException error = await Should.ThrowAsync<PostgresException>(
@@ -259,6 +287,7 @@ public sealed class AuditChainIntegrationTests
     [Fact(SkipUnless = nameof(DockerAvailability.IsAvailable), SkipType = typeof(DockerAvailability), Skip = DockerAvailability.SkipReason)]
     public async Task Delete_IsRejectedByTrigger()
     {
+        await EnsureAuditEventHasARowAsync(TestContext.Current.CancellationToken).ConfigureAwait(true);
         await using NpgsqlConnection connection = await _postgres.OpenAdminAsync(TestContext.Current.CancellationToken).ConfigureAwait(true);
 
         PostgresException error = await Should.ThrowAsync<PostgresException>(
