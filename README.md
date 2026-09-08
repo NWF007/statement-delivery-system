@@ -62,7 +62,7 @@ and it is written up in [ADR-0001](docs/adr/0001-microservices-over-modular-mono
 On Windows, Docker Desktop must be in Linux-container mode (the WSL 2 backend is the default).
 Every image is published for both amd64 and arm64, so Apple Silicon runs native, with no
 emulation. Budget about 4.5 GB of disk for images and build cache; the running stack uses about
-half a gigabyte of RAM, well inside Docker Desktop's defaults. The first build compiles seven .NET
+700 MB of RAM idle, well inside Docker Desktop's defaults. The first build compiles seven .NET
 images from source and takes **3–5 minutes** on a four-core laptop; later starts take seconds.
 The shell examples below are bash (Git Bash on Windows works; in PowerShell, `curl` is an alias
 for `Invoke-WebRequest`, so use `curl.exe`). Nothing else is needed to run the stack or the
@@ -505,8 +505,9 @@ The five with the most reasoning behind them:
    [ADR-0020](docs/adr/0020-three-tier-key-hierarchy.md).
 5. **Legal conflicts are surfaced with their statutory basis, never resolved in code** — a pure
    decision engine encodes the precedence (hold > Object Lock > statute), exhaustively tested,
-   and every refusal cites the law and the date: *409 — cannot erase: FICA s23 requires retention
-   until 2031-03-14*. [ADR-0033](docs/adr/0033-legal-conflict-surfaced-not-resolved.md).
+   and every refusal names what blocks it: a statutory refusal cites the law and the date (*409 —
+   cannot erase: FICA s23 requires retention until 2031-03-14*), a hold refusal cites the case
+   reference. [ADR-0033](docs/adr/0033-legal-conflict-surfaced-not-resolved.md).
 
 ## The audit trail, and the limit of what it proves
 
@@ -628,9 +629,15 @@ point it at the `postgres` superuser through 6432: that account is deliberately 
 PgBouncer's userlist, so PgBouncer answers `SASL authentication failed`; the superuser only ever
 connects directly on 5432, and only the migrator needs it. The seed is a bulk COPY and is **not
 idempotent**: a second run fails on the customer unique constraint. `docker compose down -v`
-first. The demo seed the stack runs on `up` is the same tool in `--demo` mode
-(`dotnet run --project tools/seed -- --demo` does it from a host, against `localhost:8081`); it
-detects an earlier seed and skips it, so it is safe to repeat.
+first. The demo seed the stack runs on `up` is the same tool in `--demo` mode. From a host it
+needs the same connection string as the volume seed above, and talks to the API on `localhost:8081`:
+
+```bash
+Postgres__PrimaryConnectionString="Host=localhost;Port=6432;Database=statements_generation;Username=app_generation;Password=$APP_GENERATION_PASSWORD" \
+dotnet run --project tools/seed -- --demo
+```
+
+It detects an earlier seed and skips it, so it is safe to repeat.
 
 Writes ~2.4M rows through Npgsql binary COPY, pre-creating every daily partition it needs, then
 runs `ANALYZE` so the `EXPLAIN` output that goes into `docs/SCALE.md` means something.

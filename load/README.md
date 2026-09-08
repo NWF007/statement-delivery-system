@@ -63,12 +63,13 @@ While a run is hot, capture the bottleneck evidence:
 
 ```bash
 # Chain-head lock waits (hypothesis 1 in SCALE.md)
-docker compose exec postgres psql -U postgres -d statements -c "
+docker compose exec -T -e PGPASSWORD="$POSTGRES_PASSWORD" postgres psql -U postgres -d statements -c "
   SELECT wait_event_type, wait_event, count(*) FROM pg_stat_activity
    WHERE state='active' GROUP BY 1,2 ORDER BY 3 DESC;"
 
-# PgBouncer pool pressure (hypothesis 2)
-docker compose exec pgbouncer psql -p 6432 -U pgbouncer pgbouncer -c "SHOW POOLS;"
+# PgBouncer pool pressure (hypothesis 2). PgBouncer listens on TCP only, so name the host.
+docker compose exec -T -e PGPASSWORD="$PGBOUNCER_ADMIN_PASSWORD" pgbouncer \
+  psql -h 127.0.0.1 -p 6432 -U pgbouncer pgbouncer -c "SHOW POOLS;"
 ```
 
 ## Honest notes
