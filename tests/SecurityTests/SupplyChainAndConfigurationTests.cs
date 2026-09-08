@@ -75,6 +75,7 @@ public sealed partial class SupplyChainAndConfigurationTests
     [InlineData("src/Services/Generation.Worker/Dockerfile")]
     [InlineData("src/Services/Retention.Worker/Dockerfile")]
     [InlineData("src/Migrations/Db.Migrator/Dockerfile")]
+    [InlineData("src/Services/MockLedger.Api/Dockerfile")]
     [InlineData("tools/seed/Dockerfile")]
     public void EveryImage_IsChiseled_AndRunsAsNonRoot(string dockerfile)
     {
@@ -97,6 +98,7 @@ public sealed partial class SupplyChainAndConfigurationTests
     [InlineData("src/Services/Generation.Worker/Dockerfile")]
     [InlineData("src/Services/Retention.Worker/Dockerfile")]
     [InlineData("src/Migrations/Db.Migrator/Dockerfile")]
+    [InlineData("src/Services/MockLedger.Api/Dockerfile")]
     [InlineData("tools/seed/Dockerfile")]
     public void RuntimeStages_DoNotReintroduceAShellOrPackageManager(string dockerfile)
     {

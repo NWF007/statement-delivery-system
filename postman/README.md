@@ -44,11 +44,15 @@ tools/postman/
 ## 2. Import
 
 In Postman: **Import** → select both JSON files. Choose the *Statement Delivery — Local*
-environment in the top-right selector. Newman:
+environment in the top-right selector, and set `customerAId` and `customerBId` to two of the
+seeded demo customers (`11111111-1111-1111-1111-111111111101` through `…110`; the environment
+ships with placeholders, see §8). Newman, with the same two ids:
 
 ```bash
 newman run postman/StatementDelivery.postman_collection.json \
-  -e postman/StatementDelivery.local.postman_environment.json
+  -e postman/StatementDelivery.local.postman_environment.json \
+  --env-var customerAId=11111111-1111-1111-1111-111111111101 \
+  --env-var customerBId=11111111-1111-1111-1111-111111111102
 ```
 
 ## 3. Minting the four JWTs
